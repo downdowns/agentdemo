@@ -1,6 +1,19 @@
 node_modules/
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Local runtime outputs
+logs/
+
+# Local vector database/cache. It can be rebuilt from docs/.
+chroma_db/
+
+# Python/tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

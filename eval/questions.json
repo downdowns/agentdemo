@@ -1,0 +1,22 @@
+[
+  {
+    "id": "calc_001",
+    "question": "帮我计算 23 乘以 19",
+    "expected_tools": ["calculator"]
+  },
+  {
+    "id": "weather_001",
+    "question": "上海今天天气怎么样？",
+    "expected_tools": ["get_weather"]
+  },
+  {
+    "id": "rag_001",
+    "question": "RAG 是什么？",
+    "expected_tools": ["search_docs"]
+  },
+  {
+    "id": "mixed_001",
+    "question": "请介绍一下 RAG，并帮我计算 12 加 8",
+    "expected_tools": ["search_docs", "calculator"]
+  }
+]

@@ -38,4 +38,10 @@ if __name__ == "__main__":
             continue
 
         # 把用户问题交给 Agent 处理。
-        run_agent(query)
+        result = run_agent(query)
+
+        print("\n 结构化返回结果：")
+        print("answer:", result["answer"])
+        print("tool_calls:", result["tool_calls"])
+        print("sources:", result["sources"])
+        print("rounds:", result["rounds"])
