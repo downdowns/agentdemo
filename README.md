@@ -206,7 +206,27 @@ eval/run_eval.py
 
 ## 6. 快速开始
 
-### 6.1 环境变量
+### 6.1 安装依赖
+
+建议使用 Python 3.11。
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+如果你使用 conda，也可以：
+
+```bash
+conda create -n rag-agent python=3.11
+conda activate rag-agent
+pip install -r requirements.txt
+```
+
+---
+
+### 6.2 环境变量
 
 在项目根目录创建 `.env`：
 
@@ -220,7 +240,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 
 ---
 
-### 6.2 命令行运行
+### 6.3 命令行运行
 
 ```bash
 python RAG_Agent_demo.py
@@ -237,7 +257,7 @@ RAG 是什么？
 
 ---
 
-### 6.3 启动 FastAPI 服务
+### 6.4 启动 FastAPI 服务
 
 ```bash
 uvicorn app.main:app --reload
@@ -260,7 +280,7 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-### 6.4 调用 `/chat`
+### 6.5 调用 `/chat`
 
 ```bash
 curl -X POST http://127.0.0.1:8000/chat \
@@ -276,7 +296,7 @@ http://127.0.0.1:8000/docs
 
 ---
 
-### 6.5 调用 `/chat/langgraph`
+### 6.6 调用 `/chat/langgraph`
 
 `/chat/langgraph` 使用 LangGraph Agent，支持通过 `session_id` 保留多轮对话状态。
 
@@ -310,7 +330,7 @@ curl -X POST http://127.0.0.1:8000/chat/langgraph \
 
 ---
 
-### 6.5 运行评估脚本
+### 6.7 运行评估脚本
 
 ```bash
 python eval/run_eval.py
