@@ -514,3 +514,538 @@ http://127.0.0.1:8000/docs
 | 评估 | 自定义 eval 脚本 |
 | 日志 | JSONL |
 
+---
+
+## 14. LangGraph 入门知识
+
+你目前已经把手写 Agent Loop 改写成了 LangGraph 学习版。
+
+### 14.1 为什么要学 LangGraph
+
+手写 Agent Loop 适合简单场景：
+
+```text
+model → tools → model
+```
+
+但当流程变复杂时，例如：
+
+```text
+router → rag → rerank → generate → verify → human_review
+```
+
+如果全部用 `if/else/while` 手写，代码会越来越难维护。
+
+LangGraph 的价值是：
+
+```text
+把 Agent 流程显式建模成 State + Node + Edge。
+```
+
+---
+
+### 14.2 手写 Agent Loop 和 LangGraph 的对应关系
+
+| 手写 Agent Loop | LangGraph |
+|---|---|
+| `messages` | `MessagesState` |
+| 调用模型 | model node |
+| 执行工具 | tools node |
+| `if message.tool_calls` | conditional edge |
+| 循环调用模型 | tools → model 回边 |
+| 手动管理历史 | checkpointer |
+| 会话 ID | thread_id |
+
+---
+
+### 14.3 State
+
+State 是图运行时保存的数据。
+
+你当前使用：
+
+```python
+MessagesState
+```
+
+可以理解成：
+
+```python
+state = {
+    "messages": [...]
+}
+```
+
+---
+
+### 14.4 Node
+
+Node 是图中的一个处理步骤，本质上就是 Python 函数。
+
+你当前有：
+
+```text
+call_model：调用模型
+call_tools：执行工具
+```
+
+节点输入 state，返回新的 state 片段：
+
+```python
+return {"messages": [response]}
+```
+
+---
+
+### 14.5 Conditional Edge
+
+Conditional Edge 是条件边。
+
+你当前的判断逻辑：
+
+```python
+if last_message.tool_calls:
+    return "tools"
+return END
+```
+
+含义：
+
+```text
+如果模型要调用工具 → 去 tools 节点
+如果模型不调用工具 → 结束图
+```
+
+---
+
+## 15. LangGraph checkpoint 和 thread_id
+
+### 15.1 checkpoint 是什么
+
+checkpoint 用来保存图运行状态。
+
+你当前保存的主要是：
+
+```python
+{
+    "messages": [...]
+}
+```
+
+没有 checkpoint 时：
+
+```text
+每次调用只看当前输入
+```
+
+有 checkpoint 后：
+
+```text
+同一个 thread_id 可以延续历史 messages
+```
+
+---
+
+### 15.2 InMemorySaver
+
+你当前使用：
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+checkpointer = InMemorySaver()
+workflow.compile(checkpointer=checkpointer)
+```
+
+它表示：
+
+```text
+把 checkpoint 存在当前 Python 进程内存里。
+```
+
+适合：
+
+- 学习
+- demo
+- 临时测试
+
+不适合：
+
+- 程序重启后还要保留状态的生产环境
+
+---
+
+### 15.3 thread_id 是什么
+
+`thread_id` 是会话 ID。
+
+调用 LangGraph 时传：
+
+```python
+config = {
+    "configurable": {
+        "thread_id": thread_id,
+    }
+}
+
+graph_app.invoke(inputs, config=config)
+```
+
+作用：
+
+```text
+告诉 LangGraph 当前这次调用属于哪个会话。
+```
+
+---
+
+### 15.4 同一个 thread_id 如何记住历史
+
+示例：
+
+```python
+run_graph_agent("我叫小明", thread_id="user-a")
+run_graph_agent("我叫什么？", thread_id="user-a")
+```
+
+因为两次都是 `user-a`，所以第二次能读取第一次保存的 messages。
+
+---
+
+### 15.5 不同 thread_id 如何隔离
+
+示例：
+
+```python
+run_graph_agent("我叫小明", thread_id="user-a")
+run_graph_agent("我叫什么？", thread_id="user-b")
+run_graph_agent("我叫什么？", thread_id="user-a")
+```
+
+预期：
+
+```text
+user-b 不知道小明
+user-a 知道小明
+```
+
+这证明不同 `thread_id` 的状态互相隔离。
+
+---
+
+### 15.6 messages_count 怎么理解
+
+`messages_count` 是当前会话累计消息条数，不是对话轮数。
+
+普通一轮对话：
+
+```text
+user → assistant
+```
+
+增加 2 条消息。
+
+调用工具的一轮：
+
+```text
+user → assistant(tool_call) → tool → assistant(final)
+```
+
+增加 4 条消息。
+
+多个工具会增加更多 tool message。
+
+---
+
+## 16. LangGraph 自定义 State 与 reducer
+
+### 16.1 为什么要自定义 State
+
+一开始你使用的是：
+
+```python
+MessagesState
+```
+
+它适合只保存：
+
+```python
+{
+    "messages": [...]
+}
+```
+
+但项目化 Agent 通常不只需要 messages，还需要保存业务字段，例如：
+
+```text
+tool_calls
+sources
+retrieved_docs
+final_answer
+session_id
+```
+
+所以你定义了自定义 State：
+
+```python
+class GraphState(TypedDict):
+    messages: Annotated[list, add_messages]
+    tool_calls: Annotated[list[dict], merge_tool_calls]
+    sources: Annotated[list[str], merge_sources]
+```
+
+---
+
+### 16.2 Annotated 是什么
+
+在 LangGraph 中：
+
+```python
+messages: Annotated[list, add_messages]
+```
+
+表示：
+
+```text
+messages 是 list 类型，并且使用 add_messages 这个 reducer 来合并新旧状态。
+```
+
+`Annotated` 的作用是给字段附加额外元信息。
+
+---
+
+### 16.3 reducer 是什么
+
+reducer 是“状态合并函数”。
+
+当节点返回：
+
+```python
+{"tool_calls": new_tool_calls}
+```
+
+LangGraph 需要知道：
+
+```text
+新 tool_calls 是覆盖旧值？
+还是追加到旧值后面？
+```
+
+reducer 就是用来定义这个规则的。
+
+---
+
+### 16.4 add_messages
+
+`add_messages` 是 LangGraph 内置 reducer。
+
+它的作用：
+
+```text
+把新 messages 追加到旧 messages 后面。
+```
+
+所以模型消息、工具消息、用户消息可以持续累积。
+
+---
+
+### 16.5 merge_tool_calls
+
+你自定义了：
+
+```python
+def merge_tool_calls(old: list[dict] | None, new: list[dict] | None) -> list[dict]:
+    return (old or []) + (new or [])
+```
+
+作用：
+
+```text
+旧工具调用记录 + 新工具调用记录
+```
+
+这样同一个 `thread_id` 下，历史工具调用不会被覆盖。
+
+---
+
+### 16.6 merge_sources
+
+你自定义了：
+
+```python
+def merge_sources(old: list[str] | None, new: list[str] | None) -> list[str]:
+    merged = []
+
+    for source in (old or []) + (new or []):
+        if source and source not in merged:
+            merged.append(source)
+
+    return merged
+```
+
+作用：
+
+```text
+累积 RAG 来源，并去重。
+```
+
+为什么要去重？
+
+因为同一个文档可能被多轮 RAG 检索重复命中。
+
+---
+
+### 16.7 不加 reducer 会怎样
+
+如果写成：
+
+```python
+tool_calls: list[dict]
+sources: list[str]
+```
+
+节点返回新值时，可能会覆盖旧值。
+
+这意味着：
+
+```text
+第一轮 calculator 记录可能被第二轮 search_docs 记录覆盖。
+```
+
+加 reducer 后，就可以跨多轮累积。
+
+---
+
+### 16.8 当前 LangGraph 学习版返回结构
+
+当前 `run_graph_agent()` 返回：
+
+```python
+{
+    "thread_id": thread_id,
+    "answer": final_message.content,
+    "tool_calls": final_state.get("tool_calls", []),
+    "sources": final_state.get("sources", []),
+    "messages_count": len(final_state["messages"]),
+}
+```
+
+这已经接近主项目 `agent.py` 的结构化返回。
+
+---
+
+### 16.9 当前测试函数
+
+你现在有两个测试函数：
+
+```python
+test_thread_isolation()
+test_tool_state_accumulation()
+```
+
+`test_thread_isolation()` 验证：
+
+```text
+不同 thread_id 不共享记忆。
+```
+
+`test_tool_state_accumulation()` 验证：
+
+```text
+同一个 thread_id 下，tool_calls 和 sources 可以跨轮累积。
+```
+
+---
+
+## 17. LangGraph Agent 服务化
+
+### 17.1 为什么要把 LangGraph 接入 FastAPI
+
+命令行版本适合学习和调试，但真实项目需要通过 HTTP API 调用。
+
+因此你新增了：
+
+```text
+POST /chat/langgraph
+```
+
+这个接口调用：
+
+```python
+run_graph_agent()
+```
+
+---
+
+### 17.2 session_id 和 thread_id 的关系
+
+API 层使用：
+
+```text
+session_id
+```
+
+LangGraph 层使用：
+
+```text
+thread_id
+```
+
+在接口中做映射：
+
+```python
+result = run_graph_agent(
+    user_query=request.message,
+    thread_id=request.session_id,
+)
+```
+
+也就是说：
+
+```text
+session_id → thread_id
+```
+
+---
+
+### 17.3 /chat 和 /chat/langgraph 的区别
+
+| 接口 | 实现 | 特点 |
+|---|---|---|
+| `/chat` | 手写 Agent Loop | 适合理解底层 Function Calling |
+| `/chat/langgraph` | LangGraph Agent | 支持 checkpoint、session_id、有状态会话 |
+
+---
+
+### 17.4 /chat/langgraph 请求示例
+
+```json
+{
+  "message": "我叫什么？",
+  "session_id": "user-a"
+}
+```
+
+返回：
+
+```json
+{
+  "thread_id": "user-a",
+  "answer": "你叫小明。",
+  "tool_calls": [],
+  "sources": [],
+  "messages_count": 4
+}
+```
+
+---
+
+### 17.5 /chat/langgraph 已验证能力
+
+你已经测试通过：
+
+1. 同一个 `session_id` 能记住历史
+2. 不同 `session_id` 之间状态隔离
+3. LangGraph 接口能正常调用工具
+4. 空 `message` 返回 HTTP 400
+5. 空 `session_id` 返回 HTTP 400

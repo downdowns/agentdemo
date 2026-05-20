@@ -412,6 +412,226 @@ messages/state → model node → tools node → conditional edge → model node
 
 ---
 
+### Q25-1：LangGraph 的 checkpoint 有什么作用？
+
+答：
+
+checkpoint 用来保存图运行过程中的 state。当前我的 LangGraph 学习版使用的是 `MessagesState`，所以主要保存的是 `messages`。
+
+没有 checkpoint 时，每次调用只看当前输入；加了 checkpoint 后，同一个 `thread_id` 下可以延续之前的对话历史，实现有状态多轮对话。
+
+---
+
+### Q25-2：thread_id 是什么？
+
+答：
+
+`thread_id` 可以理解为会话 ID 或用户 ID。LangGraph 通过 `configurable.thread_id` 判断当前调用属于哪个会话。
+
+同一个 `thread_id` 会复用历史状态，不同 `thread_id` 的状态相互隔离。
+
+---
+
+### Q25-3：你怎么验证 LangGraph 的会话隔离？
+
+答：
+
+我做了一个测试：
+
+```python
+run_graph_agent("我叫小明", thread_id="user-a")
+run_graph_agent("我叫什么？", thread_id="user-b")
+run_graph_agent("我叫什么？", thread_id="user-a")
+```
+
+结果是：
+
+```text
+user-b 不知道“小明”
+user-a 能回答“小明”
+```
+
+这说明不同 `thread_id` 的状态是隔离的，同一个 `thread_id` 能延续历史。
+
+---
+
+### Q25-4：InMemorySaver 有什么特点？
+
+答：
+
+`InMemorySaver` 是 LangGraph 的内存版 checkpointer。
+
+优点是简单，适合学习和 demo；缺点是状态只保存在当前 Python 进程中，程序关闭后就会丢失。
+
+生产环境可以换成 SQLite、Postgres 等持久化 checkpointer。
+
+---
+
+### Q25-5：messages_count 为什么第二轮会增加 2？
+
+答：
+
+因为 `messages_count` 统计的是当前会话累计消息条数，不是对话轮数。
+
+普通一轮对话会新增：
+
+```text
+user message
+assistant message
+```
+
+所以同一个 `thread_id` 下第二轮普通对话会比第一轮多 2 条消息。
+
+如果这一轮调用工具，则会新增：
+
+```text
+user
+assistant(tool_call)
+tool
+assistant(final)
+```
+
+通常至少增加 4 条消息。
+
+---
+
+### Q25-6：LangGraph 里的 reducer 是什么？
+
+答：
+
+reducer 是 LangGraph 用来合并 State 字段的函数。节点返回新状态时，LangGraph 需要知道新值应该覆盖旧值，还是和旧值合并。
+
+比如：
+
+```python
+messages: Annotated[list, add_messages]
+```
+
+表示 messages 使用 `add_messages` 合并，也就是追加新消息。
+
+我还自定义了 `merge_tool_calls` 和 `merge_sources`，让工具调用记录和 RAG 来源也能跨多轮累积。
+
+---
+
+### Q25-7：为什么要自定义 GraphState？
+
+答：
+
+一开始用 `MessagesState` 只能保存 messages。后来我希望 LangGraph Agent 也能像主项目 `agent.py` 一样返回结构化信息，比如工具调用记录和 RAG 来源，所以我自定义了 `GraphState`：
+
+```python
+class GraphState(TypedDict):
+    messages: Annotated[list, add_messages]
+    tool_calls: Annotated[list[dict], merge_tool_calls]
+    sources: Annotated[list[str], merge_sources]
+```
+
+这样图状态中不仅有对话消息，还有业务字段。
+
+---
+
+### Q25-8：merge_tool_calls 和 merge_sources 分别做什么？
+
+答：
+
+`merge_tool_calls` 用来累积工具调用记录：
+
+```text
+旧 tool_calls + 新 tool_calls
+```
+
+`merge_sources` 用来累积 RAG 来源，并做去重：
+
+```text
+旧 sources + 新 sources，再去重
+```
+
+这样同一个 `thread_id` 下，多轮调用工具时，历史工具调用和来源不会丢失。
+
+---
+
+### Q25-9：你怎么验证 tool_calls 和 sources 可以跨轮累积？
+
+答：
+
+我写了 `test_tool_state_accumulation()`，用同一个 `thread_id` 连续问两个问题：
+
+```text
+第一轮：帮我计算 23 乘以 19
+第二轮：RAG 是什么？
+```
+
+如果 reducer 生效，第二轮返回的 `tool_calls` 应该同时包含：
+
+```text
+calculator
+search_docs
+```
+
+测试结果符合预期，说明 `tool_calls` 可以跨轮累积，`sources` 也能保留 RAG 来源。
+
+---
+
+### Q25-10：你是怎么把 LangGraph Agent 接入 FastAPI 的？
+
+答：
+
+我新增了一个接口：
+
+```text
+POST /chat/langgraph
+```
+
+请求体包含：
+
+```json
+{
+  "message": "用户问题",
+  "session_id": "user-a"
+}
+```
+
+接口内部调用：
+
+```python
+run_graph_agent(
+    user_query=request.message,
+    thread_id=request.session_id,
+)
+```
+
+也就是说，API 层的 `session_id` 会映射为 LangGraph 的 `thread_id`，从而实现有状态多轮对话。
+
+---
+
+### Q25-11：`/chat` 和 `/chat/langgraph` 有什么区别？
+
+答：
+
+`/chat` 调用的是我手写的 Agent Loop，适合理解 Function Calling 的底层流程，比如 messages、tool_calls、工具执行和 tool message。
+
+`/chat/langgraph` 调用的是 LangGraph 版本，它把流程显式建模成 StateGraph，并支持 checkpoint 和 thread_id，因此可以实现同一 session_id 保留历史、不同 session_id 状态隔离。
+
+---
+
+### Q25-12：为什么 API 层叫 session_id，而 LangGraph 里叫 thread_id？
+
+答：
+
+`session_id` 是面向 API 使用者的概念，更容易理解为一次用户会话。
+
+`thread_id` 是 LangGraph checkpointer 用来区分不同对话线程的配置项。
+
+所以我在 FastAPI 层做了映射：
+
+```text
+session_id → thread_id
+```
+
+这样既符合 API 语义，也能使用 LangGraph 的状态管理能力。
+
+---
+
 ## 7. 高频追问
 
 ### Q26：模型不调用工具怎么办？
@@ -481,4 +701,3 @@ messages/state → model node → tools node → conditional edge → model node
 7. 日志记录
 8. 自动评估
 9. FastAPI 服务化
-

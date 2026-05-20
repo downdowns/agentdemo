@@ -25,6 +25,7 @@ sys.path.append(str(PROJECT_ROOT))
 # run_agent 是整个 Agent 的核心入口：
 # FastAPI 接口收到请求后，会把用户问题交给 run_agent 处理。
 from agent import run_agent
+from LangGraph_learning.step2_agent_loop_graph import run_graph_agent
 
 
 class ChatRequest(BaseModel):
@@ -39,6 +40,12 @@ class ChatRequest(BaseModel):
     """
 
     message: str
+
+class LangGraphChatRequest(BaseModel):
+    """LangGraph 聊天请求体。"""
+
+    message: str
+    session_id: str = "demo-thread"
 
 
 # 创建 FastAPI 应用对象。
@@ -93,4 +100,31 @@ def chat(request: ChatRequest) -> dict:
         raise HTTPException(
             status_code=500,
             detail=f"Agent 执行失败：{str(e)}",
+        )
+
+@app.post("/chat/langgraph")
+def chat_langgraph(request: LangGraphChatRequest) -> dict:
+    """LangGraph Agent 聊天接口。"""
+    if not request.message.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="message 不能为空",
+        )
+
+    if not request.session_id.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="session_id 不能为空",
+        )
+
+    try:
+        result = run_graph_agent(
+            user_query=request.message,
+            thread_id=request.session_id,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LangGraph Agent 执行失败：{str(e)}",
         )

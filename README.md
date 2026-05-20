@@ -4,6 +4,13 @@
 
 本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、日志记录、最小评估脚本和 FastAPI 服务化能力。
 
+当前提供两套 Agent API：
+
+| 接口 | 实现方式 | 特点 |
+|---|---|---|
+| `POST /chat` | 手写 Agent Loop | 适合理解 Function Calling 底层流程 |
+| `POST /chat/langgraph` | LangGraph Agent | 支持 checkpoint、session_id 有状态会话、多会话隔离 |
+
 > 项目定位：面向 LLM 应用开发 / RAG 工程 / Agent 开发岗位的求职展示项目。
 
 ---
@@ -50,6 +57,7 @@ search_docs / calculator / get_weather
 | 向量数据库 | Chroma |
 | 文档切分 | `RecursiveCharacterTextSplitter` |
 | Agent 实现 | 手写 Function Calling Agent Loop |
+| LangGraph 学习版 | StateGraph / checkpoint / thread_id |
 | 工具定义 | JSON Schema / Tool Calling |
 | API 服务 | FastAPI |
 | 请求校验 | Pydantic |
@@ -62,9 +70,13 @@ search_docs / calculator / get_weather
 
 ```mermaid
 graph TD
-    A[User / curl / Swagger] --> B[FastAPI /chat]
-    B --> C[run_agent]
+    A[User / curl / Swagger] --> B[FastAPI]
+    B --> B1[POST /chat]
+    B --> B2[POST /chat/langgraph]
+    B1 --> C[run_agent 手写 Agent Loop]
+    B2 --> C2[run_graph_agent LangGraph Agent]
     C --> D[LLM 判断是否调用工具]
+    C2 --> D
     D -->|知识库问题| E[search_docs]
     D -->|计算问题| F[calculator]
     D -->|天气问题| G[get_weather]
@@ -264,6 +276,40 @@ http://127.0.0.1:8000/docs
 
 ---
 
+### 6.5 调用 `/chat/langgraph`
+
+`/chat/langgraph` 使用 LangGraph Agent，支持通过 `session_id` 保留多轮对话状态。
+
+第一次请求：
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat/langgraph \
+  -H "Content-Type: application/json" \
+  -d '{"message": "我叫小明", "session_id": "user-a"}'
+```
+
+第二次请求：
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat/langgraph \
+  -H "Content-Type: application/json" \
+  -d '{"message": "我叫什么？", "session_id": "user-a"}'
+```
+
+预期：第二次可以回答你叫小明。
+
+会话隔离测试：
+
+```bash
+curl -X POST http://127.0.0.1:8000/chat/langgraph \
+  -H "Content-Type: application/json" \
+  -d '{"message": "我叫什么？", "session_id": "user-b"}'
+```
+
+预期：`user-b` 不知道 `user-a` 的历史信息。
+
+---
+
 ### 6.5 运行评估脚本
 
 ```bash
@@ -355,6 +401,58 @@ Agent 执行异常：
 
 ---
 
+### `POST /chat/langgraph`
+
+LangGraph Agent 聊天接口。
+
+请求：
+
+```json
+{
+  "message": "我叫什么？",
+  "session_id": "user-a"
+}
+```
+
+字段说明：
+
+| 字段 | 含义 |
+|---|---|
+| `message` | 用户问题 |
+| `session_id` | API 层会话 ID，会映射为 LangGraph 的 `thread_id` |
+
+响应：
+
+```json
+{
+  "thread_id": "user-a",
+  "answer": "你叫小明。",
+  "tool_calls": [],
+  "sources": [],
+  "messages_count": 4
+}
+```
+
+如果调用工具，响应中会包含 `tool_calls` 和 `sources`。
+
+错误响应：
+
+```json
+{
+  "detail": "message 不能为空"
+}
+```
+
+或：
+
+```json
+{
+  "detail": "session_id 不能为空"
+}
+```
+
+---
+
 ## 8. 项目亮点
 
 ### 8.1 RAG 被封装为 Agent 工具
@@ -393,6 +491,71 @@ search_docs + calculator
 
 通过 `eval/run_eval.py` 自动验证 Agent 是否调用了期望工具，避免只靠人工测试。
 
+### 8.5 LangGraph 有状态 Agent 学习版
+
+项目中包含：
+
+```text
+LangGraph_learning/step2_agent_loop_graph.py
+```
+
+该文件用于学习如何把手写 Agent Loop 映射为 LangGraph：
+
+```text
+START → model → conditional edge
+              ├── tools → model
+              └── END
+```
+
+并进一步加入：
+
+- `InMemorySaver` checkpoint
+- `thread_id` 会话 ID
+- 同一 thread_id 的历史记忆
+- 不同 thread_id 的会话隔离
+- LangGraph Agent 结构化返回
+- 自定义 `GraphState`
+- 自定义 reducer 累积 `tool_calls` 和 `sources`
+
+当前 LangGraph 学习版返回：
+
+```python
+{
+    "thread_id": "...",
+    "answer": "...",
+    "tool_calls": [...],
+    "sources": [...],
+    "messages_count": 6
+}
+```
+
+并且已经通过 FastAPI 暴露为：
+
+```text
+POST /chat/langgraph
+```
+
+该接口把请求里的 `session_id` 映射为 LangGraph 的 `thread_id`，从而实现：
+
+- 同一个 `session_id` 保留历史上下文
+- 不同 `session_id` 之间状态隔离
+- 工具调用记录和 RAG 来源可跨轮累积
+
+---
+
+### 8.6 手写 Agent 和 LangGraph Agent 对比
+
+| 能力 | `/chat` 手写 Agent | `/chat/langgraph` LangGraph Agent |
+|---|---|---|
+| 工具调用 | 支持 | 支持 |
+| RAG 来源 | 支持 | 支持 |
+| 结构化返回 | 支持 | 支持 |
+| 日志 | 支持 | 暂未单独写日志 |
+| 流程表达 | Python loop / if-else | StateGraph / Node / Edge |
+| 有状态会话 | 需要手动管理 | checkpoint + thread_id |
+| 多会话隔离 | 需要手动实现 | 已支持 |
+| 适合用途 | 理解底层原理 | 扩展复杂 Agent 工作流 |
+
 ---
 
 ## 9. 当前不足
@@ -404,7 +567,7 @@ search_docs + calculator
 3. 天气工具是模拟数据
 4. 尚未 Docker 化
 5. 尚未接入前端
-6. 尚未实现 LangGraph 版本的工作流编排
+6. LangGraph 目前是学习版，尚未接入 FastAPI 主流程
 7. 尚未接入 vLLM 本地模型部署
 
 ---
@@ -417,7 +580,7 @@ search_docs + calculator
 2. 增加 source 命中评估
 3. 加入 reranker
 4. Docker 化部署
-5. 使用 LangGraph 重构 Agent Loop
+5. 将 LangGraph Agent 接入 FastAPI 主流程
 6. 接入 vLLM 部署本地 Qwen 小模型
 7. 增加前端页面
 8. 接入真实天气 / 搜索 / 数据库工具
@@ -428,7 +591,7 @@ search_docs + calculator
 
 可以用下面这段话介绍项目：
 
-> 我实现了一个基于 RAG 和 Function Calling 的多工具 Agent。系统把本地知识库检索、计算器和天气查询封装成工具，模型会根据用户问题自动选择工具。工具执行后，结果会返回给模型生成最终答案。项目还做了工程化增强，包括结构化返回、工具调用记录、RAG 来源追踪、异常处理、JSONL 日志、最小工具调用评估，以及 FastAPI 服务化接口。
+> 我实现了一个基于 RAG 和 Function Calling 的多工具 Agent。系统把本地知识库检索、计算器和天气查询封装成工具，模型会根据用户问题自动选择工具。工具执行后，结果会返回给模型生成最终答案。项目还做了工程化增强，包括结构化返回、工具调用记录、RAG 来源追踪、异常处理、JSONL 日志、最小工具调用评估，以及 FastAPI 服务化接口。同时我用 LangGraph 重构了 Agent Loop，新增 `/chat/langgraph` 接口，通过 checkpoint 和 session_id/thread_id 实现有状态多轮对话与多会话隔离。
 
 重点可以展开讲：
 
@@ -436,4 +599,3 @@ search_docs + calculator
 2. Agent Loop：模型 tool_calls、程序执行工具、工具结果写回 messages
 3. 工程化：结构化返回、日志、评估、API
 4. 下一步优化：LangGraph、rerank、vLLM、Docker
-
