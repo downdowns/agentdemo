@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、日志记录、最小评估脚本和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、日志记录、chunk-level 检索评估、最小 rerank baseline 和 FastAPI 服务化能力。
 
 当前提供两套 Agent API：
 
@@ -100,7 +100,31 @@ graph TD
 - 使用 `RecursiveCharacterTextSplitter` 切分文档
 - 使用 `BAAI/bge-m3` 生成 embedding
 - 使用 Chroma 存储和检索向量
-- 检索结果返回 `source` 和 `content`
+- 为每个 chunk 写入 `source`、`chunk_id`、`chunk_index` metadata
+- 检索结果返回 `source`、`chunk_id`、`chunk_index`、`content`
+
+### 4.1.1 两阶段检索与最小 rerank baseline
+
+`search_docs` 当前采用两阶段检索：
+
+```text
+用户 query
+  ↓
+Chroma 向量召回 top candidate_k
+  ↓
+基于 query 和 chunk 的词项重叠进行 rerank
+  ↓
+返回重排后的 top k chunk
+```
+
+实现方式：
+
+- 第一阶段：用 Chroma `similarity_search` 多召回候选，`candidate_k = max(k * 3, 5)`。
+- 第二阶段：使用一个轻量规则 rerank baseline，对 query 和 chunk 做词项匹配打分。
+- 中文 query 会被拆成 2 字符窗口，英文 / 数字按词保留。
+- 返回结果中包含 `rerank_score`，方便观察重排是否生效。
+
+该 baseline 不是正式 reranker 模型，但能体现 RAG 中“先召回、再重排”的工程思路。当前评估中，加入 rerank baseline 后，Chunk Recall@3 从 **85.19%** 提升到 **96.30%**。
 
 ### 4.2 Function Calling Agent Loop
 
@@ -150,7 +174,7 @@ logs/agent.log
 
 日志格式为 JSONL，便于后续分析和评估。
 
-### 4.5 Agent 评估
+### 4.5 Agent 与 RAG 评估
 
 项目内置最小评估脚本：
 
@@ -159,21 +183,53 @@ eval/questions.json
 eval/run_eval.py
 ```
 
-当前评估目标：
-
-```text
-判断 Agent 是否调用了期望工具。
-```
-
-示例：
+评估集中的每条样本包含用户问题、期望调用工具、期望命中的文档来源和期望命中的 chunk：
 
 ```json
 {
-  "id": "calc_001",
-  "question": "帮我计算 23 乘以 19",
-  "expected_tools": ["calculator"]
+  "id": "rag_chunk_001",
+  "question": "RAG 中为什么要切分文档？",
+  "expected_tools": ["search_docs"],
+  "expected_sources": ["langchain_rag.md"],
+  "expected_chunk_ids": [
+    "langchain_rag.md::chunk_001",
+    "langchain_rag.md::chunk_002"
+  ]
 }
 ```
+
+当前评估四类指标：
+
+1. **Tool Call Pass Rate**
+   - 判断 Agent 是否调用了期望工具。
+   - 例如知识库问题期望调用 `search_docs`，计算问题期望调用 `calculator`。
+
+2. **Source Hit Rate**
+   - 判断 RAG 检索结果是否命中了期望文档来源。
+
+3. **Chunk Recall@1**
+   - 判断排在第 1 位的 chunk 是否命中标注的 `expected_chunk_ids`。
+
+4. **Chunk Recall@3**
+   - 判断前 3 个 chunk 中覆盖了多少标注相关 chunk。
+
+当前 rerank baseline 评估结果：
+
+```text
+Tool Call Pass Rate：100.00%
+Source Hit Rate：100.00%
+Chunk Recall@1：64.81%
+Chunk Recall@3：96.30%
+```
+
+使用 `python eval/run_eval.py --compare-rerank` 可自动输出 rerank 前后对比：
+
+```text
+Chunk Recall@1：64.81% -> 64.81%（+0.00%）
+Chunk Recall@3：85.19% -> 96.30%（+11.11%）
+```
+
+当前评估仍属于最小可用评估，后续可继续扩展为 MRR、真实 reranker 前后对比、答案正确性和引用一致性评估。
 
 ---
 
@@ -186,7 +242,7 @@ eval/run_eval.py
 ├── docs/                        # 本地知识库文档
 ├── eval/
 │   ├── questions.json           # 评估问题集
-│   └── run_eval.py              # Agent 工具调用评估脚本
+│   └── run_eval.py              # Agent 工具调用与 RAG source 命中评估脚本
 ├── logs/
 │   └── agent.log                # Agent 执行日志
 ├── agent.py                     # 手写 Function Calling Agent Loop
@@ -339,12 +395,17 @@ python eval/run_eval.py
 输出示例：
 
 ```text
-共加载 4 条评估问题
+共加载 11 条评估问题
 ...
 评估完成
-总题数：4
-通过数：4
-通过率：100.00%
+总题数：11
+工具调用通过数 Tool Call Pass Count：11
+工具调用通过率 Tool Call Pass Rate：100.00%
+来源命中数 Source Hit Count：11
+来源命中率 Source Hit Rate：100.00%
+RAG 评估题数：9
+Chunk Recall@1：64.81%
+Chunk Recall@3：96.30%
 ```
 
 ---
@@ -509,7 +570,14 @@ search_docs + calculator
 
 ### 8.4 可评估
 
-通过 `eval/run_eval.py` 自动验证 Agent 是否调用了期望工具，避免只靠人工测试。
+通过 `eval/run_eval.py` 自动验证：
+
+- Agent 是否调用了期望工具
+- RAG 是否命中了期望文档来源
+- top-k 检索结果是否命中了期望 chunk
+- rerank baseline 是否改善检索排序
+
+当前评估指标包括 Tool Call Pass Rate、Source Hit Rate、Chunk Recall@1 和 Chunk Recall@3，避免只靠人工测试。
 
 ### 8.5 LangGraph 有状态 Agent 学习版
 
@@ -582,12 +650,12 @@ POST /chat/langgraph
 
 当前项目仍是学习和求职展示阶段，存在以下不足：
 
-1. RAG 还没有 reranker
-2. 评估目前只覆盖工具调用，没有覆盖答案质量
+1. 当前 rerank 只是基于词项重叠的 baseline，还没有接入真正的 reranker 模型
+2. 评估已覆盖工具调用、source 命中和 chunk-level Recall@k，但还没有覆盖答案质量、引用一致性和 MRR 等更完整指标
 3. 天气工具是模拟数据
 4. 尚未 Docker 化
 5. 尚未接入前端
-6. LangGraph 目前是学习版，尚未接入 FastAPI 主流程
+6. LangGraph 已接入 FastAPI，但 checkpoint 目前仍是内存级 InMemorySaver，尚未持久化到数据库
 7. 尚未接入 vLLM 本地模型部署
 
 ---
@@ -596,9 +664,9 @@ POST /chat/langgraph
 
 优先级从高到低：
 
-1. 增加 RAG 答案质量评估
-2. 增加 source 命中评估
-3. 加入 reranker
+1. 增加 RAG 答案质量评估和引用一致性评估
+2. 扩展检索评估为 MRR，并记录 rerank 前后对比结果
+3. 接入真正的 reranker 模型替换当前词项重叠 baseline
 4. Docker 化部署
 5. 将 LangGraph Agent 接入 FastAPI 主流程
 6. 接入 vLLM 部署本地 Qwen 小模型
@@ -611,11 +679,11 @@ POST /chat/langgraph
 
 可以用下面这段话介绍项目：
 
-> 我实现了一个基于 RAG 和 Function Calling 的多工具 Agent。系统把本地知识库检索、计算器和天气查询封装成工具，模型会根据用户问题自动选择工具。工具执行后，结果会返回给模型生成最终答案。项目还做了工程化增强，包括结构化返回、工具调用记录、RAG 来源追踪、异常处理、JSONL 日志、最小工具调用评估，以及 FastAPI 服务化接口。同时我用 LangGraph 重构了 Agent Loop，新增 `/chat/langgraph` 接口，通过 checkpoint 和 session_id/thread_id 实现有状态多轮对话与多会话隔离。
+> 我实现了一个基于 RAG 和 Function Calling 的多工具 Agent。系统把本地知识库检索、计算器和天气查询封装成工具，模型会根据用户问题自动选择工具。工具执行后，结果会返回给模型生成最终答案。项目还做了工程化增强，包括结构化返回、工具调用记录、RAG 来源追踪、异常处理、JSONL 日志、最小工具调用、RAG source 命中、chunk-level Recall@k 评估和 rerank baseline，以及 FastAPI 服务化接口。同时我用 LangGraph 重构了 Agent Loop，新增 `/chat/langgraph` 接口，通过 checkpoint 和 session_id/thread_id 实现有状态多轮对话与多会话隔离。
 
 重点可以展开讲：
 
 1. RAG 流程：文档加载、切分、embedding、Chroma 检索
 2. Agent Loop：模型 tool_calls、程序执行工具、工具结果写回 messages
 3. 工程化：结构化返回、日志、评估、API
-4. 下一步优化：LangGraph、rerank、vLLM、Docker
+4. 下一步优化：真实 reranker、答案质量评估、vLLM、Docker

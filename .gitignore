@@ -17,3 +17,7 @@ chroma_db/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Ignore all markdown files except README.md
+*.md
+!README.md
