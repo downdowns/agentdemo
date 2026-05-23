@@ -18,6 +18,5 @@ chroma_db/
 .mypy_cache/
 .ruff_cache/
 
-# Ignore all markdown files except README.md
-*.md
-!README.md
+# Local notes / drafts not meant for GitHub
+local_notes/
