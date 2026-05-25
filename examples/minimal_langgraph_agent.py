@@ -1,4 +1,4 @@
-"""LangGraph 版本的 RAG Agent。
+"""最小 LangGraph Agent 示例，保留为 examples 参考。
 
 这个文件用 LangGraph 的 StateGraph 替代原来的手写 Agent Loop。
 核心思想：
@@ -15,6 +15,12 @@ from typing import Literal
 from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, MessagesState, StateGraph
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
 
 from models import llm
 from schemas import TOOLS

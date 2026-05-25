@@ -1,4 +1,4 @@
-# Python 环境下的 Function Calling 完整实现
+# Function Calling 基础示例
 import os
 from dotenv import load_dotenv
 import json
@@ -101,82 +101,67 @@ available_functions = {
     "get_weather": get_weather
 }
 
-tools = [calculator_schema, weather_schema]
-
 # 这个函数是整个 demo 的主流程
 def handle_function_calling(user_message: str) -> str:
-    """处理 Function Calling 的Agent Loop流程"""
+    """处理 Function Calling 的完整流程"""
     try:
-        # 执行完所有工具后，messages变成
-        """
-        system: 你是一个有用的助手
-        user: 用户问题
-        assistant: 我要调用 calculator 和 get_weather
-        tool: calculator 的结果是 42
-        tool: get_weather 的结果是 晴天 26°C
-        """
-        messages = [
-            {"role": "system", "content": "你是一个有用的助手，可以执行数学计算和查询天气。"},
-            {"role": "user", "content": user_message}
-        ]
+        # 第一次 API 调用
+        response = client.chat.completions.create(
+            model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+            messages=[
+                {"role": "system", "content": "你是一个有用的助手，可以执行数学计算和查询天气。"},
+                {"role": "user", "content": user_message}
+            ],
+            tools=[calculator_schema, weather_schema],
+            tool_choice="auto"
+        )
 
-        round_num = 1
+        message = response.choices[0].message
 
-        print("\n========== Agent Loop 开始 ==========")
-        print("用户输入：", user_message)
+        #这个 message.too_calls 可能为 None，所以需要判断模型是否调用了函数
 
-        while True:
-            print(f"\n========== 第 {round_num} 轮：调用模型 ==========")
-            print("当前 messages 条数：", len(messages))
+        # 检查是否需要函数调用
+        if message.tool_calls:
+            # message.tool_calls 是一个列表，包含了模型请求调用的所有工具信息
+            print(f"模型请求调用了{len(message.tool_calls)}个工具：")
 
-            response = client.chat.completions.create(
-                model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
-                messages=messages,
-                tools=tools,
-                tool_choice="auto"
-            )
-            # 取出模型回复，tool_calls在这里面
-            message = response.choices[0].message
+            # 如果模型请求调用工具，就进入工具调用流程
+            messages = [
+                {"role": "system", "content": "你是一个有用的助手，可以执行数学计算和查询天气。"},
+                {"role": "user", "content": user_message},
+                message
+            ]
 
-            if not message.tool_calls:
-                print(f"\n========== 第 {round_num} 轮：模型没有继续调用工具 ==========")
-                print("模型最终回答：", message.content)
-                print("========== Agent Loop 结束 ==========\n")
-                return message.content
-            
-            # 这一步非常关键，因为 message 里包含了模型刚才的tool_call请求，你需要把它加入对话历史，告诉下一轮模型：你刚刚请求调用了这些工具。后面再追加工具结果，模型才能正确对应起来
-            """
-            messages是Agent 的上下文记忆
-            每一轮都要把这些内容保存进去：
-            """
-            messages.append(message)
-
-            print(f"\n第 {round_num} 轮：模型请求调用了 {len(message.tool_calls)} 个工具")
-
+            # 处理每个函数调用
             for tool_call in message.tool_calls:
                 function_name = tool_call.function.name
                 function_args = json.loads(tool_call.function.arguments)
-
-                print("\n--- 准备执行工具 ---")
-                print("tool_call_id：", tool_call.id)
-                print("工具名称：", function_name)
+                
+                print("准备调用工具：", function_name)
                 print("工具参数：", function_args)
 
+                # 执行函数
                 function_response = available_functions[function_name](**function_args)
 
                 print("工具执行结果：", function_response)
-
-                # 把工具执行结果返回给模型
+                
+                # 添加函数执行结果
                 messages.append({
                     "tool_call_id": tool_call.id,
                     "role": "tool",
                     "content": json.dumps(function_response, ensure_ascii=False)
                 })
 
-                print("工具结果已追加到 messages")
+            # 获取最终响应
+            final_response = client.chat.completions.create(
+                model=os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash"),
+                messages=messages,
+                tools=[calculator_schema, weather_schema]
+            )
 
-            print(f"\n第 {round_num} 轮结束，准备进入下一轮模型调用")
-            round_num += 1
+            return final_response.choices[0].message.content
+        else:
+            return message.content
 
     except Exception as e:
         print(f"Function calling error: {e}")

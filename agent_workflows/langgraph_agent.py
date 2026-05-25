@@ -1,12 +1,11 @@
-"""LangGraph Step 2：把手写 Agent Loop 改造成图结构。
+"""LangGraph Agent 工作流实现。
 
-目标：
-- 理解 State / Node / Edge / Conditional Edge
-- 实现 model -> tools -> model 的最小 Agent 图
-- 加入 checkpoint 和 thread_id，理解有状态 Agent
-- 自定义 GraphState，保存 tool_calls 和 sources
-- 使用 reducer 让 model_calls / tool_calls / sources 跨轮累积
-- 增加 quality_check 节点，对最终回答做规则级自检
+该模块将手写 Agent Loop 抽象为可维护的 StateGraph：
+- model 节点：调用大模型并判断是否需要工具
+- tools 节点：执行 search_docs / calculator / get_weather 等工具
+- quality_check 节点：对最终回答做规则级质检
+- checkpoint + thread_id：支持有状态多轮会话和多会话隔离
+- reducer：累积 model_calls / tool_calls / sources 等观测数据
 """
 import json
 import sys
@@ -20,7 +19,7 @@ from langchain_core.messages import SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-# 当前文件在 LangGraph_learning 子目录下；
+# 当前文件在 agent_workflows 子目录下；
 # models.py / tools.py / schemas.py 在项目根目录。
 # 这里把项目根目录加入 sys.path，保证直接运行本文件时也能导入项目模块。
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -240,7 +239,7 @@ def quality_check_node(state: GraphState) -> dict:
     为什么要加这个节点？
     - 让 LangGraph 工作流不只是 model -> tools -> model
     - 模拟真实 Agent 系统里的后处理 / 质检 / 审计节点
-    - 把一些明显异常结构化返回，便于 API 层、日志和面试讲解
+    - 把一些明显异常结构化返回，便于 API 层、日志和质量追踪
 
     当前检查项：
     - 最终回答是否为空

@@ -1,4 +1,10 @@
-"""RAG Agent Demo 主入口。"""
+"""RAG Agent 命令行调试入口。"""
+
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
 
 from agent import run_agent
 from models import llm
@@ -6,7 +12,7 @@ from vector_store import docs, splits
 
 
 if __name__ == "__main__":
-    print("\nRAG Agent Demo 初始化成功")
+    print("\nRAG Agent CLI 初始化成功")
     print("Chat 模型：", llm.model_name)
     print("Embedding 模型：BAAI/bge-m3")
     print("Embedding 类型：HuggingFaceEmbeddings")
@@ -44,4 +50,4 @@ if __name__ == "__main__":
         print("answer:", result["answer"])
         print("tool_calls:", result["tool_calls"])
         print("sources:", result["sources"])
-        print("rounds:", result["rounds"])
+        print("rounds:", len(result.get("model_calls", [])))

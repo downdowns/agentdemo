@@ -29,7 +29,7 @@ sys.path.append(str(PROJECT_ROOT))
 
 # run_agent 是整个 Agent 的核心入口：
 # FastAPI 接口收到请求后，会把用户问题交给 run_agent 处理。
-from LangGraph_learning.step2_agent_loop_graph import run_graph_agent
+from agent_workflows.langgraph_agent import run_graph_agent
 from agent import run_agent
 
 

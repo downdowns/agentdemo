@@ -8,11 +8,11 @@
 
 | 接口 | 实现方式 | 特点 |
 |---|---|---|
-| `POST /chat` | 手写 Agent Loop | 适合理解 Function Calling 底层流程 |
+| `POST /chat` | 手写 Agent Loop | 流程透明，便于调试和观测工具调用链路 |
 | `POST /chat/stream` | 手写 Agent Loop + SSE | 返回 `metadata` / `answer_delta` / `done` / `error` 流式事件 |
 | `POST /chat/langgraph` | LangGraph Agent | 支持 checkpoint、session_id 有状态会话、多会话隔离、quality_check 质检 |
 
-> 项目定位：面向 LLM 应用开发 / RAG 工程 / Agent 开发岗位的求职展示项目。
+> 项目定位：面向企业知识库问答场景的 RAG Agent 后端服务原型。
 
 ---
 
@@ -59,7 +59,7 @@ search_docs / calculator / get_weather
 | 向量数据库 | Chroma |
 | 文档切分 | `RecursiveCharacterTextSplitter` |
 | Agent 实现 | 手写 Function Calling Agent Loop |
-| LangGraph 学习版 | StateGraph / checkpoint / thread_id |
+| LangGraph Agent | StateGraph / checkpoint / thread_id |
 | 工具定义 | JSON Schema / Tool Calling |
 | API 服务 | FastAPI |
 | 请求校验 | Pydantic |
@@ -403,10 +403,19 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 ├── app/
 │   └── main.py                  # FastAPI 服务入口
 ├── docs/                        # 本地知识库文档
+├── agent_workflows/
+│   ├── __init__.py
+│   └── langgraph_agent.py       # LangGraph Agent 工作流
 ├── eval/
 │   ├── questions.json           # 评估问题集
 │   ├── run_eval.py              # 工具调用、RAG 检索、MRR、答案关键点、Citation Faithfulness、rerank mode 对比评估脚本
 │   └── analyze_logs.py          # 读取 JSONL trace，统计 Metrics 和慢请求
+├── examples/                    # 命令行调试和基础示例
+│   ├── rag_cli.py
+│   ├── langgraph_cli.py
+│   ├── function_calling_basic.py
+│   ├── function_calling_agent_loop.py
+│   └── minimal_langgraph_agent.py
 ├── logs/
 │   └── agent.log                # Agent 执行日志 / trace 日志
 ├── Dockerfile                   # 容器化部署配置
@@ -417,7 +426,6 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 ├── schemas.py                   # 工具 Schema
 ├── tools.py                     # 工具函数实现
 ├── vector_store.py              # 文档加载、切分、Chroma 向量库
-├── RAG_Agent_demo.py            # 命令行交互入口
 └── README.md
 ```
 
@@ -462,7 +470,7 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 ### 6.3 命令行运行
 
 ```bash
-python RAG_Agent_demo.py
+python examples/rag_cli.py
 ```
 
 示例问题：
@@ -1051,15 +1059,15 @@ START → model → conditional edge
 
 这个节点让 LangGraph 版本不只是手写 Agent Loop 的等价改写，而是体现了图工作流可以继续扩展“生成后质检、人工审核、风险控制、审计记录”等节点。
 
-### 8.7 LangGraph 有状态 Agent 学习版
+### 8.7 LangGraph 有状态 Agent 工作流
 
 项目中包含：
 
 ```text
-LangGraph_learning/step2_agent_loop_graph.py
+agent_workflows/langgraph_agent.py
 ```
 
-该文件用于学习如何把手写 Agent Loop 映射为 LangGraph：
+该文件将手写 Agent Loop 抽象为可维护的 LangGraph 工作流：
 
 ```text
 START → model → conditional edge
@@ -1087,7 +1095,7 @@ START → model → conditional edge
 - 调用 `search_docs` 后是否记录到 sources
 - 工具结果中是否存在 error
 
-当前 LangGraph 学习版返回：
+当前 LangGraph Agent 返回：
 
 ```python
 {
@@ -1140,13 +1148,13 @@ POST /chat/langgraph
 | 有状态会话 | 需要手动管理 | checkpoint + thread_id |
 | 多会话隔离 | 需要手动实现 | 已支持 |
 | 回答质检 | 暂无独立节点 | 规则级 quality_check 节点 |
-| 适合用途 | 理解底层原理 | 扩展复杂 Agent 工作流 |
+| 适合用途 | 简洁透明的 Agent 执行链路 | 扩展复杂 Agent 工作流 |
 
 ---
 
 ## 9. 当前不足
 
-当前项目仍是学习和求职展示阶段，存在以下不足：
+当前项目仍处于工程原型和持续迭代阶段，存在以下不足：
 
 1. 已接入 CrossEncoder reranker baseline，但在当前小规模知识库上未优于 keyword rerank，后续需要在更大文档规模和更复杂 query 上继续验证
 2. 评估已覆盖工具调用、source 命中、chunk-level Recall@k、MRR@3、答案关键点命中、Citation Faithfulness baseline、rerank mode 差异分析和 Prompt V1/V2 对比，但还没有覆盖严格引用一致性、幻觉检测和 LLM-as-Judge
@@ -1174,20 +1182,3 @@ POST /chat/langgraph
 9. 接入真实天气 / 搜索 / 数据库工具
 
 ---
-
-## 11. 面试讲解建议
-
-可以用下面这段话介绍项目：
-
-> 我实现了一个基于 RAG 和 Function Calling 的多工具 Agent。系统把本地知识库检索、计算器和天气查询封装成工具，模型会根据用户问题自动选择工具。工具执行后，结果会返回给模型生成最终答案。项目还做了工程化增强，包括结构化返回、工具调用记录、RAG 来源追踪、异常处理、JSONL 日志、Prompt V1/V2 对比实验、Tool Call Pass Rate、Source Hit Rate、Chunk Recall@1/3、MRR@3、Answer Point Hit Rate、hard case 评估、keyword / CrossEncoder reranker 对比实验、FastAPI 服务化接口和 `/chat/stream` SSE 流式输出。同时我用 LangGraph 重构了 Agent Loop，新增 `/chat/langgraph` 接口，通过 checkpoint 和 session_id/thread_id 实现有状态多轮对话与多会话隔离，并增加了 `quality_check` 节点，对最终回答做规则级自检。
-
-更新后的项目还加入了基础 Agent Trace 和 Metrics：每次 `/chat` 请求会生成 `trace_id`，记录总耗时、每轮模型调用耗时、每个工具调用耗时、RAG 来源、success/error 状态；再通过 `eval/analyze_logs.py` 汇总成功率、平均耗时、工具调用排行榜和慢请求 Top5，用于排查 Agent 行为和性能问题。
-
-重点可以展开讲：
-
-1. RAG 流程：文档加载、切分、embedding、Chroma 检索
-2. Agent Loop：模型 tool_calls、程序执行工具、工具结果写回 messages
-3. Trace / Metrics：trace_id、model_calls、tool_calls、慢请求分析
-4. Streaming：FastAPI `StreamingResponse`、SSE 事件、metadata / answer_delta / done / error
-5. 工程化：结构化返回、日志、评估、API、Docker
-6. 下一步优化：引用一致性评估、LLM-as-Judge、token 级 streaming、vLLM、OpenTelemetry
