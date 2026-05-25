@@ -119,16 +119,29 @@ def save_signature(signature_file: str, signature: str) -> None:
 
 
 def split_docs(docs: list[Document]) -> list[Document]:
-    """把长文档切分成更小的片段，方便向量检索。"""
+    """把长文档切分成更小的片段，并为每个片段补充 chunk metadata。"""
     text_splitter = RecursiveCharacterTextSplitter(
-        # 每个片段大约 100 个字符。
-        chunk_size=100,
-        # 相邻片段重叠 20 个字符，避免上下文被切断。
-        chunk_overlap=20,
+        # 每个片段大约 500 个字符。
+        # 500 左右更适合当前 Markdown 技术文档，能保留较完整的小节语义。
+        chunk_size=500,
+        # 相邻片段重叠 80 个字符，避免关键上下文被切断。
+        chunk_overlap=80,
     )
 
-    # 执行切分，返回切分后的 Document 片段列表。
-    return text_splitter.split_documents(docs)
+    splits = text_splitter.split_documents(docs)
+    
+    source_chunk_count: dict[str, int] = {}
+
+    for split in splits:
+        source = split.metadata.get("source", "unknown")
+
+        chunk_index = source_chunk_count.get(source, 0)
+        source_chunk_count[source] = chunk_index + 1
+
+        split.metadata["chunk_index"] = chunk_index
+        split.metadata["chunk_id"] = f"{source}::chunk_{chunk_index:03d}"
+
+    return splits
 
 
 def load_or_create_vector_store(splits: list[Document]) -> Chroma:

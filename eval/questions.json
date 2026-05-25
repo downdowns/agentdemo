@@ -2,21 +2,689 @@
   {
     "id": "calc_001",
     "question": "帮我计算 23 乘以 19",
-    "expected_tools": ["calculator"]
+    "expected_tools": [
+      "calculator"
+    ],
+    "expected_sources": [],
+    "expected_chunk_ids": [],
+    "expected_answer_points": []
   },
   {
     "id": "weather_001",
     "question": "上海今天天气怎么样？",
-    "expected_tools": ["get_weather"]
+    "expected_tools": [
+      "get_weather"
+    ],
+    "expected_sources": [],
+    "expected_chunk_ids": [],
+    "expected_answer_points": []
   },
   {
-    "id": "rag_001",
-    "question": "RAG 是什么？",
-    "expected_tools": ["search_docs"]
+    "id": "rag_chunk_001",
+    "question": "RAG 中为什么要切分文档？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langchain_rag.md"
+    ],
+    "expected_chunk_ids": [
+      "langchain_rag.md::chunk_001",
+      "langchain_rag.md::chunk_002"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "文档切分可以适配模型上下文窗口限制",
+        "keywords": [
+          "上下文窗口",
+          "输入长度",
+          "长度有限",
+          "模型输入"
+        ]
+      },
+      {
+        "point": "文档切分可以提高检索粒度和准确性",
+        "keywords": [
+          "检索粒度",
+          "更精准",
+          "相关片段",
+          "精准"
+        ]
+      },
+      {
+        "point": "文档切分可以减少无关内容带来的噪声",
+        "keywords": [
+          "降低噪声",
+          "减少噪声",
+          "无关内容",
+          "噪声"
+        ]
+      },
+      {
+        "point": "文档切分后可以通过 source/chunk_id 支持来源定位和引用",
+        "keywords": [
+          "来源",
+          "引用",
+          "定位",
+          "chunk_id"
+        ]
+      }
+    ]
   },
   {
-    "id": "mixed_001",
-    "question": "请介绍一下 RAG，并帮我计算 12 加 8",
-    "expected_tools": ["search_docs", "calculator"]
+    "id": "rag_chunk_002",
+    "question": "chunk_size 和 chunk_overlap 分别是什么意思？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langchain_rag.md"
+    ],
+    "expected_chunk_ids": [
+      "langchain_rag.md::chunk_003"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "chunk_size 表示每个文本切片的目标长度",
+        "keywords": [
+          "chunk_size",
+          "目标长度",
+          "每个文本片段",
+          "长度"
+        ]
+      },
+      {
+        "point": "chunk_overlap 表示相邻切片之间保留的重叠内容",
+        "keywords": [
+          "chunk_overlap",
+          "重叠",
+          "相邻",
+          "overlap"
+        ]
+      },
+      {
+        "point": "overlap 可以避免关键信息被切分边界截断",
+        "keywords": [
+          "截断",
+          "边界",
+          "上下文",
+          "关键信息"
+        ]
+      },
+      {
+        "point": "chunk 参数需要在语义完整性和噪声之间权衡",
+        "keywords": [
+          "太大",
+          "太小",
+          "噪声",
+          "语义",
+          "上下文"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_003",
+    "question": "LangGraph checkpoint 和 thread_id 是什么关系？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langgraph_persistence.md"
+    ],
+    "expected_chunk_ids": [
+      "langgraph_persistence.md::chunk_003",
+      "langgraph_persistence.md::chunk_006"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "checkpoint 是 LangGraph 图状态的快照",
+        "keywords": [
+          "checkpoint",
+          "状态",
+          "快照",
+          "state"
+        ]
+      },
+      {
+        "point": "thread_id 是用来区分会话的标识",
+        "keywords": [
+          "thread_id",
+          "会话",
+          "标识",
+          "session"
+        ]
+      },
+      {
+        "point": "相同 thread_id 会复用或恢复对应会话的历史状态",
+        "keywords": [
+          "相同",
+          "历史",
+          "继续",
+          "恢复",
+          "复用"
+        ]
+      },
+      {
+        "point": "不同 thread_id 对应不同状态链，可以实现会话隔离",
+        "keywords": [
+          "不同",
+          "隔离",
+          "不会串话",
+          "多会话"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_004",
+    "question": "InMemorySaver 有什么作用和限制？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langgraph_persistence.md"
+    ],
+    "expected_chunk_ids": [
+      "langgraph_persistence.md::chunk_004"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "InMemorySaver 用来保存 LangGraph checkpoint/state",
+        "keywords": [
+          "InMemorySaver",
+          "checkpoint",
+          "保存",
+          "状态"
+        ]
+      },
+      {
+        "point": "InMemorySaver 把状态保存在当前 Python 进程内存中",
+        "keywords": [
+          "内存",
+          "Python 进程",
+          "当前进程"
+        ]
+      },
+      {
+        "point": "Python 进程关闭或服务重启后内存状态会丢失",
+        "keywords": [
+          "关闭",
+          "重启",
+          "消失",
+          "丢失"
+        ]
+      },
+      {
+        "point": "InMemorySaver 不适合生产环境长期持久化或多进程共享",
+        "keywords": [
+          "生产环境",
+          "不适合",
+          "持久化",
+          "多进程"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_005",
+    "question": "LangGraph 中 reducer 有什么作用？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langgraph_state_reducer.md"
+    ],
+    "expected_chunk_ids": [
+      "langgraph_state_reducer.md::chunk_003",
+      "langgraph_state_reducer.md::chunk_007"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "reducer 决定旧 state 和新 state update 如何合并",
+        "keywords": [
+          "reducer",
+          "合并",
+          "旧状态",
+          "新更新",
+          "state"
+        ]
+      },
+      {
+        "point": "没有 reducer 的字段通常会被新值覆盖",
+        "keywords": [
+          "覆盖",
+          "默认",
+          "丢失",
+          "没有 reducer"
+        ]
+      },
+      {
+        "point": "messages 通常需要用 add_messages 追加历史消息",
+        "keywords": [
+          "messages",
+          "add_messages",
+          "追加",
+          "历史消息"
+        ]
+      },
+      {
+        "point": "不同字段可以使用不同 reducer，例如追加、去重或覆盖",
+        "keywords": [
+          "不同字段",
+          "追加",
+          "去重",
+          "覆盖"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_006",
+    "question": "为什么 tool_calls 和 sources 也需要 reducer？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langgraph_state_reducer.md"
+    ],
+    "expected_chunk_ids": [
+      "langgraph_state_reducer.md::chunk_004",
+      "langgraph_state_reducer.md::chunk_005",
+      "langgraph_state_reducer.md::chunk_006"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "tool_calls 需要 reducer 来跨节点或跨轮累积工具调用记录",
+        "keywords": [
+          "tool_calls",
+          "累积",
+          "工具调用记录",
+          "跨轮"
+        ]
+      },
+      {
+        "point": "sources 需要 reducer 来累积 RAG 检索来源",
+        "keywords": [
+          "sources",
+          "来源",
+          "RAG",
+          "检索"
+        ]
+      },
+      {
+        "point": "如果不加 reducer，后一次更新会覆盖前一次记录",
+        "keywords": [
+          "覆盖",
+          "前一次",
+          "后一次",
+          "只剩"
+        ]
+      },
+      {
+        "point": "sources 通常需要去重，避免重复展示同一来源",
+        "keywords": [
+          "去重",
+          "重复",
+          "同一个文档",
+          "重复出现"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_007",
+    "question": "Chroma 在 RAG 系统中存储了什么？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "chroma_vector_store.md"
+    ],
+    "expected_chunk_ids": [
+      "chroma_vector_store.md::chunk_000"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "Chroma 存储文本 chunk 的正文内容",
+        "keywords": [
+          "文本内容",
+          "正文",
+          "chunk",
+          "page_content"
+        ]
+      },
+      {
+        "point": "Chroma 存储 embedding 生成的向量表示用于相似度检索",
+        "keywords": [
+          "向量",
+          "embedding",
+          "相似度",
+          "检索"
+        ]
+      },
+      {
+        "point": "Chroma 存储 metadata，例如 source、chunk_id、chunk_index",
+        "keywords": [
+          "metadata",
+          "source",
+          "chunk_id",
+          "chunk_index"
+        ]
+      },
+      {
+        "point": "Chroma 负责找资料，不负责生成最终答案",
+        "keywords": [
+          "找资料",
+          "不负责生成",
+          "大模型",
+          "生成答案"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_008",
+    "question": "为什么要给每个 chunk 保存 chunk_id？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "chroma_vector_store.md"
+    ],
+    "expected_chunk_ids": [
+      "chroma_vector_store.md::chunk_005"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "chunk_id 可以唯一标识具体文档片段",
+        "keywords": [
+          "chunk_id",
+          "唯一",
+          "具体片段",
+          "标识"
+        ]
+      },
+      {
+        "point": "chunk_id 支持 chunk-level Recall@k 等检索评估",
+        "keywords": [
+          "Recall@k",
+          "chunk-level",
+          "评估",
+          "检索评估"
+        ]
+      },
+      {
+        "point": "chunk_id 可以支持更精确的来源定位和引用",
+        "keywords": [
+          "来源定位",
+          "引用",
+          "定位",
+          "精确"
+        ]
+      },
+      {
+        "point": "chunk_id 方便调试切分、检索和 rerank 效果",
+        "keywords": [
+          "调试",
+          "切分",
+          "rerank",
+          "对比"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_chunk_009",
+    "question": "FastAPI 为什么需要 Pydantic 请求模型和业务校验？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "fastapi_request_validation.md"
+    ],
+    "expected_chunk_ids": [
+      "fastapi_request_validation.md::chunk_001",
+      "fastapi_request_validation.md::chunk_002"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "Pydantic 请求模型可以自动解析和校验请求体字段",
+        "keywords": [
+          "Pydantic",
+          "请求模型",
+          "校验",
+          "请求体"
+        ]
+      },
+      {
+        "point": "Pydantic 可以校验字段是否存在以及类型是否正确",
+        "keywords": [
+          "字段",
+          "类型",
+          "是否存在",
+          "自动校验"
+        ]
+      },
+      {
+        "point": "业务校验用于处理类型合法但业务无效的情况，例如空问题",
+        "keywords": [
+          "业务校验",
+          "空字符串",
+          "空问题",
+          "业务上"
+        ]
+      },
+      {
+        "point": "请求校验可以返回更明确的错误响应并避免无效输入进入 Agent",
+        "keywords": [
+          "400",
+          "错误",
+          "无效输入",
+          "Agent"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_hard_001",
+    "question": "如果企业知识库 RAG 回答不准确，你会从哪些环节排查和优化？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langchain_rag.md",
+      "chroma_vector_store.md"
+    ],
+    "expected_chunk_ids": [
+      "langchain_rag.md::chunk_006",
+      "chroma_vector_store.md::chunk_006"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "需要排查文档清洗、切分参数和语义完整性",
+        "keywords": [
+          "文档清洗",
+          "切分",
+          "chunk_size",
+          "chunk_overlap",
+          "语义"
+        ]
+      },
+      {
+        "point": "需要排查 embedding 模型是否适合当前中文和技术文档",
+        "keywords": [
+          "embedding",
+          "向量化",
+          "中文",
+          "技术文档",
+          "模型"
+        ]
+      },
+      {
+        "point": "需要排查检索策略，例如 top_k、metadata、hybrid search",
+        "keywords": [
+          "top_k",
+          "metadata",
+          "检索策略",
+          "hybrid search",
+          "过滤"
+        ]
+      },
+      {
+        "point": "可以通过 rerank 或 query rewrite 提升召回和排序效果",
+        "keywords": [
+          "rerank",
+          "query rewrite",
+          "重排",
+          "改写",
+          "召回"
+        ]
+      },
+      {
+        "point": "需要用 Recall@k、答案正确性、引用一致性等指标评估优化效果",
+        "keywords": [
+          "Recall@k",
+          "答案正确性",
+          "引用一致性",
+          "评估",
+          "指标"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_hard_002",
+    "question": "LangGraph 里 checkpoint、thread_id 和 InMemorySaver 三者分别是什么？它们如何一起实现有状态多轮对话？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langgraph_persistence.md"
+    ],
+    "expected_chunk_ids": [
+      "langgraph_persistence.md::chunk_003",
+      "langgraph_persistence.md::chunk_004",
+      "langgraph_persistence.md::chunk_006"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "checkpoint 保存 LangGraph 图运行时 state 快照",
+        "keywords": [
+          "checkpoint",
+          "state",
+          "状态",
+          "快照"
+        ]
+      },
+      {
+        "point": "thread_id 是会话标识，用来找到对应的历史 checkpoint",
+        "keywords": [
+          "thread_id",
+          "会话",
+          "标识",
+          "历史 checkpoint",
+          "session"
+        ]
+      },
+      {
+        "point": "相同 thread_id 会延续历史 messages，实现多轮记忆",
+        "keywords": [
+          "相同",
+          "历史 messages",
+          "多轮记忆",
+          "继续",
+          "恢复"
+        ]
+      },
+      {
+        "point": "不同 thread_id 对应不同状态链，实现多会话隔离",
+        "keywords": [
+          "不同",
+          "状态链",
+          "隔离",
+          "不会串话",
+          "多会话"
+        ]
+      },
+      {
+        "point": "InMemorySaver 将 checkpoint 保存在当前 Python 进程内存中，重启会丢失",
+        "keywords": [
+          "InMemorySaver",
+          "内存",
+          "Python 进程",
+          "重启",
+          "丢失"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "rag_hard_003",
+    "question": "为什么 LangGraph Agent 不能只用 MessagesState？tool_calls 和 sources 为什么也要 reducer？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "langgraph_state_reducer.md"
+    ],
+    "expected_chunk_ids": [
+      "langgraph_state_reducer.md::chunk_001",
+      "langgraph_state_reducer.md::chunk_003",
+      "langgraph_state_reducer.md::chunk_004",
+      "langgraph_state_reducer.md::chunk_005",
+      "langgraph_state_reducer.md::chunk_006"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "MessagesState 主要维护 messages，真实 Agent 还需要结构化字段",
+        "keywords": [
+          "MessagesState",
+          "messages",
+          "结构化",
+          "额外字段"
+        ]
+      },
+      {
+        "point": "tool_calls 和 sources 独立字段方便 API 返回、调试和日志分析",
+        "keywords": [
+          "tool_calls",
+          "sources",
+          "API",
+          "调试",
+          "日志"
+        ]
+      },
+      {
+        "point": "reducer 决定旧 state 和新 state update 如何合并",
+        "keywords": [
+          "reducer",
+          "旧状态",
+          "新更新",
+          "合并",
+          "state"
+        ]
+      },
+      {
+        "point": "没有 reducer 的字段可能被后一次更新覆盖，导致历史记录丢失",
+        "keywords": [
+          "覆盖",
+          "丢失",
+          "后一次",
+          "历史记录",
+          "默认"
+        ]
+      },
+      {
+        "point": "tool_calls 需要追加累积，sources 需要追加并去重",
+        "keywords": [
+          "追加",
+          "累积",
+          "去重",
+          "merge_tool_calls",
+          "merge_sources"
+        ]
+      }
+    ]
   }
 ]

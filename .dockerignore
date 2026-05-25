@@ -1,0 +1,27 @@
+# Secret files
+.env
+.env.*
+
+# Local notes and drafts
+local_notes/
+
+# Runtime logs
+logs/
+
+# Local vector database cache
+chroma_db/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Git and editor files
+.git/
+.DS_Store
+.vscode/
+
+# Node dependencies not used by FastAPI service
+node_modules/

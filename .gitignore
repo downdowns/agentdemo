@@ -20,3 +20,8 @@ chroma_db/
 
 # Local notes / drafts not meant for GitHub
 local_notes/
+
+# Root-level Markdown notes are treated as local drafts by default.
+# Keep README.md for GitHub; business knowledge-base docs under docs/ are still tracked.
+/*.md
+!/README.md

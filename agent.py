@@ -16,11 +16,14 @@
 
 import json
 import os
+import uuid
+import time
 
 from config import MAX_AGENT_ROUNDS
 from models import llm
 from schemas import TOOLS
 from tools import AVAILABLE_FUNCTIONS
+from prompts import DEFAULT_SYSTEM_PROMPT
 
 
 def save_agent_log(record: dict) -> None:
@@ -39,7 +42,7 @@ def save_agent_log(record: dict) -> None:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
-def run_agent(user_query: str) -> dict:
+def run_agent(user_query: str, system_prompt: str | None = None) -> dict:
     """
     运行一轮 Agent 问答。
 
@@ -52,8 +55,17 @@ def run_agent(user_query: str) -> dict:
 
     返回结构：
     {
+        "trace_id": "本次请求的唯一追踪ID",
         "user_query": "用户原始问题",
         "answer": "模型最终回答",
+        "model_calls": [
+            {
+                "round": 1,
+                "duration_ms": "这一轮模型调用耗时",
+                "has_tool_calls": true,
+                "tool_call_count": 1
+            }
+        ],
         "tool_calls": [
             {
                 "name": "工具名",
@@ -62,35 +74,43 @@ def run_agent(user_query: str) -> dict:
             }
         ],
         "sources": ["RAG 检索来源"],
-        "rounds": 2
+        "rounds": 2,
+        "duration_ms": 1850,
+        "success": true,
+        "error": null,
     }
     """
+    # start_time 用来记录本次 Agent 请求的开始时间。
+    # 后面在返回结果前，用当前时间减去 start_time，就能得到总耗时。
+    start_time = time.perf_counter()
+
+    # trace_id 是本次Agent 请求的唯一编号
+    # 一次 run_agent 调用只生成一个 trace_id
+    # 后续日志、工具调用记录、API返回都可以用它串起来
+    trace_id = uuid.uuid4().hex
+
     # 记录每次工具调用的工具名、参数和结果。
     # 这个列表最终会返回给 API，也会写入日志，方便调试和评估。
     tool_call_records = []
 
+    # 记录每一轮模型调用的耗时和是否触发工具调用。
+    # 这可以帮助我们判断 Agent 慢在模型调用，还是慢在工具执行。
+    model_call_records = []
+
     # 记录 search_docs 检索到的文档来源，方便 API 返回和答案溯源。
     sources = []
 
+    active_system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
     # messages 是 Agent 的上下文记忆。
     # 每一轮都会追加：
     # - 模型消息 AIMessage
     # - 工具结果 tool message
     # 这样模型下一轮才能知道之前发生了什么。
+
     messages = [
         {
             "role": "system",
-            "content": (
-                "你是一个多工具 Agent 助手。"
-                "如果用户的问题包含多个彼此独立的任务，请尽量在同一轮中一次性调用所有需要的工具。"
-                "如果问题需要查本地知识库，请调用 search_docs。"
-                "如果问题需要数学计算，请调用 calculator。"
-                "如果问题需要查询天气，请调用 get_weather。"
-                "只有当前一个工具结果会影响下一个工具参数时，才分多轮调用工具。"
-                "请根据工具结果给出清晰、简洁的最终回答。"
-                "如果使用了 search_docs 的结果，请在回答末尾列出参考来源。"
-                "如果知识库中没有相关信息，请明确说明：知识库中没有找到相关信息，不要编造。"
-            ),
+            "content": active_system_prompt,
         },
         {
             "role": "user",
@@ -104,28 +124,48 @@ def run_agent(user_query: str) -> dict:
 
         # 调用模型，并把工具 schema 传给模型。
         # tool_choice="auto" 表示让模型自己决定是否调用工具。
+        model_start_time = time.perf_counter()
+
         response = llm.invoke(
             messages,
             tools=TOOLS,
             tool_choice="auto",
         )
 
+        model_duration_ms = int((time.perf_counter() - model_start_time) * 1000)
+
         # LangChain 返回的是 AIMessage，这里命名为 message，方便理解。
         message = response
+
+        model_call_records.append(
+            {
+                "round": round_num,
+                "duration_ms": model_duration_ms,
+                "has_tool_calls": bool(message.tool_calls),
+                "tool_call_count": len(message.tool_calls or []),
+            }
+        )
 
         # 如果模型没有继续调用工具，说明它已经准备好最终回答。
         if not message.tool_calls:
             print("\n模型最终回答：")
             print(message.content)
 
+            duration_ms = int((time.perf_counter() - start_time) * 1000)
             # 先构造统一结果对象，再写日志、再返回。
             # 这样可以保证 API 返回和日志记录使用同一份数据。
             result = {
+                "trace_id": trace_id,
+                "agent_type": "manual",
                 "user_query": user_query,
                 "answer": message.content,
+                "model_calls": model_call_records,
                 "tool_calls": tool_call_records,
                 "sources": sources,
                 "rounds": round_num,
+                "duration_ms": duration_ms,
+                "success": True,
+                "error": None,
             }
 
             save_agent_log(result)
@@ -156,6 +196,8 @@ def run_agent(user_query: str) -> dict:
 
             # 防御性判断：如果模型返回了不存在的工具名，给它一个错误结果。
             # 注意：工具名来自模型输出，不能假设一定正确。
+            tool_start_time = time.perf_counter()
+
             if function_name not in AVAILABLE_FUNCTIONS:
                 function_response = {"error": f"未知工具：{function_name}"}
             else:
@@ -167,7 +209,9 @@ def run_agent(user_query: str) -> dict:
                 except Exception as e:
                     function_response = {"error": f"工具执行出错：{str(e)}"}
 
+            tool_duration_ms = int((time.perf_counter() - tool_start_time) * 1000)
             print("工具执行结果：", function_response)
+            print("工具耗时(ms):", tool_duration_ms)
 
             # 记录工具调用详情。
             # 这相当于一个最小 trace，可以用于：
@@ -180,6 +224,7 @@ def run_agent(user_query: str) -> dict:
                     "name": function_name,
                     "args": function_args,
                     "result": function_response,
+                    "duration_ms": tool_duration_ms,
                 }
             )
 
@@ -207,12 +252,22 @@ def run_agent(user_query: str) -> dict:
 
     # 即使达到最大轮数，也返回和正常情况一致的字段，
     # 这样 API 调用方不用写额外的特殊处理逻辑。
+    duration_ms = int((time.perf_counter() - start_time) * 1000)
+
+    error_message = "达到最大 Agent 轮数，程序停止继续调用工具。"
+
     result = {
+        "trace_id": trace_id,
+        "agent_type": "manual",
         "user_query": user_query,
-        "answer": "达到最大 Agent 轮数，程序停止继续调用工具。",
+        "answer": error_message,
+        "model_calls": model_call_records,
         "tool_calls": tool_call_records,
         "sources": sources,
         "rounds": MAX_AGENT_ROUNDS,
+        "duration_ms": duration_ms,
+        "success": False,
+        "error": error_message,
     }
 
     save_agent_log(result)
