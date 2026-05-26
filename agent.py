@@ -213,6 +213,14 @@ def run_agent(user_query: str, system_prompt: str | None = None) -> dict:
             print("工具执行结果：", function_response)
             print("工具耗时(ms):", tool_duration_ms)
 
+            search_docs_cache_hit = None
+
+            if function_name == "search_docs" and isinstance(function_response, list):
+                search_docs_cache_hit = bool(function_response) and all(
+                    item.get("cache_hit") is True
+                    for item in function_response
+                )
+
             # 记录工具调用详情。
             # 这相当于一个最小 trace，可以用于：
             # - API 返回
@@ -225,6 +233,7 @@ def run_agent(user_query: str, system_prompt: str | None = None) -> dict:
                     "args": function_args,
                     "result": function_response,
                     "duration_ms": tool_duration_ms,
+                    "cache_hit": search_docs_cache_hit,
                 }
             )
 

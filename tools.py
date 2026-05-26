@@ -14,6 +14,8 @@ Function Calling 的完整链路是：
 """
 
 import re
+import os
+import time
 from typing import Any
 
 from sentence_transformers import CrossEncoder
@@ -52,6 +54,37 @@ _cross_encoder_reranker: CrossEncoder | None = None
 # 这个 baseline 在当前项目里多次实验后效果不佳，
 # 所以默认关闭；需要做实验时再手动打开。
 USE_QUERY_REWRITE = False
+
+# Search docs cache 开关：
+# - True：开启 search_docs 检索结果缓存
+# - False：每次都重新走向量检索和 rerank
+ENABLE_SEARCH_DOCS_CACHE = os.getenv("ENABLE_SEARCH_DOCS_CACHE", "true").lower() == "true"
+
+# Search docs cache TTL：
+# 缓存有效期，单位是秒。
+# 默认 300 秒，也就是 5 分钟。
+SEARCH_DOCS_CACHE_TTL_SECONDS = int(os.getenv("SEARCH_DOCS_CACHE_TTL_SECONDS", "300"))
+
+# search_docs 的内存缓存。
+# key：由 query / k / rewrite / rerank 配置组成
+# value：包含 created_at 和 results
+SEARCH_DOCS_CACHE: dict[str, dict[str, Any]] = {}
+
+def _build_search_docs_cache_key(query: str, k: int) -> str:
+    """构造 search_docs 缓存 key。
+
+    cache key 必须包含会影响检索结果的关键配置，
+    避免不同配置下错误复用缓存。
+    """
+    normalized_query = query.strip()
+
+    return (
+        f"query={normalized_query}"
+        f"|k={k}"
+        f"|rewrite={USE_QUERY_REWRITE}"
+        f"|rerank={USE_RERANK}"
+        f"|rerank_mode={RERANK_MODE}"
+    )
 
 def _should_rewrite_query(query: str) -> bool:
     """判断一个 query 是否值得做 rewrite。
@@ -252,6 +285,28 @@ def search_docs(query: str, k: int = 2) -> list[dict[str, Any]]:
     - content：检索到的文档内容
     - rewritten_query：实际用于检索的 query（如果开启 query rewrite）
     """
+    cache_key = _build_search_docs_cache_key(query, k)
+
+    if ENABLE_SEARCH_DOCS_CACHE:
+        cached_item = SEARCH_DOCS_CACHE.get(cache_key)
+
+        if cached_item is not None:
+            cache_age = time.time() - cached_item["created_at"]
+
+            if cache_age <= SEARCH_DOCS_CACHE_TTL_SECONDS:
+                cached_results = cached_item["results"]
+
+                # 返回一份浅拷贝，避免外部代码不小心修改缓存里的原始对象。
+                return [
+                    {
+                        **result,
+                        "cache_hit": True,
+                    }
+                    for result in cached_results
+                ]
+
+            # 如果缓存过期，就删除，避免字典越积越大。
+            del SEARCH_DOCS_CACHE[cache_key]
     # 如果开启 query rewrite，就先把 query 改写成更适合检索的版本。
     # 这一步的目标是让“短问题 / 口语化问题 / 省略主语的问题”更容易命中相关 chunk。
     rewritten_query = rewrite_query_for_search(query) if USE_QUERY_REWRITE else query
@@ -322,12 +377,24 @@ def search_docs(query: str, k: int = 2) -> list[dict[str, Any]]:
             }
         )
 
+    if ENABLE_SEARCH_DOCS_CACHE:
+        SEARCH_DOCS_CACHE[cache_key] = {
+            "created_at": time.time(),
+            "results": results,
+        }
+
     # 返回检索结果列表。
     # 这里不直接返回 LangChain Document 对象，是因为：
     # - Document 不能很好地 JSON 序列化
     # - Agent 工具结果需要能 json.dumps
     # - FastAPI 返回也更适合普通 dict/list
-    return results
+    return [
+        {
+            **result,
+            "cache_hit": False,
+        }
+        for result in results
+    ]
 
 
 def calculator(operation: str, a: float, b: float) -> dict[str, Any]:

@@ -5,6 +5,31 @@
 
 Trace 关注“一次请求发生了什么”；
 Metrics 关注“很多次请求整体表现怎么样”。
+
+你可以把这个文件理解成项目里的“运行体检报告”：
+
+1. 请求是否成功？
+   - success_count / failed_count / success_rate
+
+2. 请求慢不慢？
+   - avg_duration_ms
+   - slow_top5
+
+3. Agent 一次请求里调用了几次模型？
+   - avg_model_call_count
+
+4. Agent 一次请求里调用了几次工具？
+   - avg_tool_call_count
+   - tool_name_counter
+
+5. 手写 Agent 和 LangGraph Agent 分别表现怎么样？
+   - agent_type_counter
+   - agent_type_details
+
+6. search_docs 缓存有没有效果？
+   - search_docs_cache_hit_count
+   - search_docs_cache_miss_count
+   - search_docs_cache_hit_rate
 """
 
 import json
@@ -41,6 +66,18 @@ def load_logs(log_path: Path) -> list[dict]:
 
 def analyze_basic_metrics(records: list[dict]) -> dict:
     """统计 Agent 日志的基础指标。
+
+    这里统计的是“全局概览”，也就是不区分 manual / langgraph，
+    把所有日志混在一起看整体情况。
+
+    主要输出：
+    - total_count：日志总条数
+    - success_rate：成功率
+    - avg_duration_ms：平均请求耗时
+    - avg_model_call_count：平均模型调用次数
+    - avg_tool_call_count：平均工具调用次数
+    - tool_name_counter：不同工具分别被调用了多少次
+    - search_docs_cache_hit_rate：search_docs 缓存命中率
 
     注意：
     早期日志可能还没有 success / duration_ms 字段，
@@ -117,6 +154,20 @@ def analyze_basic_metrics(records: list[dict]) -> dict:
     # 统计所有工具名出现次数，用于生成工具调用排行榜。
     tool_name_counter = Counter()
 
+    # 统计 search_docs 缓存命中情况。
+    #
+    # 为什么只统计 search_docs？
+    # - search_docs 是 RAG 检索工具，最适合做 retrieval result cache。
+    # - calculator / get_weather 当前没有接缓存，所以不统计。
+    #
+    # 三种情况：
+    # - hit：cache_hit=True，说明这次 search_docs 直接用了缓存结果。
+    # - miss：cache_hit=False，说明这次没有命中缓存，走了真实检索。
+    # - unknown：老日志或者异常日志里没有 cache_hit 字段，不能判断。
+    search_docs_cache_hit_count = 0
+    search_docs_cache_miss_count = 0
+    search_docs_cache_unknown_count = 0
+
     # 统计不同 Agent 类型的请求数量。
     # 新日志中 agent_type 可能是 manual / langgraph；
     # 老日志没有 agent_type，统一记为 unknown。
@@ -137,6 +188,46 @@ def analyze_basic_metrics(records: list[dict]) -> dict:
             if tool_name:
                 tool_name_counter[tool_name] += 1
 
+            # 只有 search_docs 工具才有缓存命中这个概念。
+            #
+            # 注意：
+            # 新日志里 cache_hit 在 tool_call 顶层，例如：
+            # {
+            #     "name": "search_docs",
+            #     "cache_hit": true,
+            #     "result": [...]
+            # }
+            #
+            # 老日志没有这个字段，所以会进入 unknown。
+            if tool_name == "search_docs":
+                cache_hit = tool_call.get("cache_hit")
+
+                if cache_hit is True:
+                    search_docs_cache_hit_count += 1
+                elif cache_hit is False:
+                    search_docs_cache_miss_count += 1
+                else:
+                    search_docs_cache_unknown_count += 1
+
+    # 计算缓存命中率。
+    #
+    # 命中率只用 hit + miss 做分母，不把 unknown 放进去。
+    # 因为 unknown 代表“这条日志没有记录 cache_hit”，不能证明命中或未命中。
+    #
+    # 公式：
+    # Search Docs Cache Hit Rate =
+    #     hit_count / (hit_count + miss_count)
+    search_docs_cache_known_count = (
+        search_docs_cache_hit_count + search_docs_cache_miss_count
+    )
+
+    if search_docs_cache_known_count == 0:
+        search_docs_cache_hit_rate = 0
+    else:
+        search_docs_cache_hit_rate = (
+            search_docs_cache_hit_count / search_docs_cache_known_count
+        )
+
     return {
         "total_count": total_count,
         "known_status_count": known_status_count,
@@ -152,11 +243,27 @@ def analyze_basic_metrics(records: list[dict]) -> dict:
         "tool_call_count_sample_size": len(tool_call_counts),
         "total_tool_call_count": sum(tool_name_counter.values()),
         "tool_name_counter": tool_name_counter,
+        "search_docs_cache_hit_count": search_docs_cache_hit_count,
+        "search_docs_cache_miss_count": search_docs_cache_miss_count,
+        "search_docs_cache_unknown_count": search_docs_cache_unknown_count,
+        "search_docs_cache_hit_rate": search_docs_cache_hit_rate,
         "agent_type_counter": agent_type_counter,
     }
 
 def analyze_slow_and_failed(records: list[dict]) -> dict:
-    """统计慢请求和失败请求。"""
+    """统计慢请求和失败请求。
+
+    这部分主要用于排查问题：
+
+    1. 慢请求 Top5
+       - 找出最慢的 5 条请求；
+       - 通过 trace_id 回到日志里看它慢在哪里；
+       - 可能慢在模型调用、RAG 检索、rerank、工具调用或数据库保存。
+
+    2. 失败请求 trace_id
+       - 只列出失败请求的 trace_id；
+       - 后续可以根据 trace_id 定位具体错误。
+    """
     # 只保留有 duration_ms 的记录，方便排序。
     duration_records = [
         record for record in records
@@ -188,7 +295,22 @@ def analyze_slow_and_failed(records: list[dict]) -> dict:
     }
 
 def analyze_agent_type_details(records: list[dict]) -> dict[str, dict]:
-    """按 agent_type 统计更细的运行指标。"""
+    """按 agent_type 统计更细的运行指标。
+
+    为什么要按 agent_type 分开？
+
+    当前项目里有两条 Agent 路线：
+    - manual：手写 Agent Loop，对应 /chat
+    - langgraph：LangGraph 主线 Agent，对应 /chat/langgraph
+
+    如果只看整体平均值，可能看不出是哪条路线慢、哪条路线调用工具更多。
+    所以这里按 agent_type 分组，分别统计：
+    - 请求数
+    - 成功率
+    - 平均耗时
+    - 平均模型调用次数
+    - 平均工具调用次数
+    """
     grouped_records: dict[str, list[dict]] = {}
 
     for record in records:
@@ -264,7 +386,12 @@ def analyze_agent_type_details(records: list[dict]) -> dict[str, dict]:
     return agent_type_details
 
 def print_report(metrics: dict, extra_metrics: dict, agent_type_details: dict[str, dict]) -> None:
-    """打印面试可讲的 Metrics 报告。"""
+    """打印面试可讲的 Metrics 报告。
+
+    注意：
+    analyze_* 函数负责“算指标”；
+    print_report 负责“把指标展示给人看”。
+    """
     print("\n========== Agent 运行报告 ==========")
     print(f"日志总条数：{metrics['total_count']}")
     print(f"成功请求数：{metrics['success_count']}")
@@ -324,6 +451,12 @@ def print_report(metrics: dict, extra_metrics: dict, agent_type_details: dict[st
             print(f"{tool_name}: {count}")
     else:
         print("暂无工具调用记录")
+
+    print("\n========== Search Docs Cache ==========")
+    print(f"Search Docs Cache Hit Count：{metrics['search_docs_cache_hit_count']}")
+    print(f"Search Docs Cache Miss Count：{metrics['search_docs_cache_miss_count']}")
+    print(f"Search Docs Cache Unknown Count：{metrics['search_docs_cache_unknown_count']}")
+    print(f"Search Docs Cache Hit Rate：{metrics['search_docs_cache_hit_rate']:.2%}")
 
     print("\n========== 慢请求 Top5 ==========")
     if extra_metrics["slow_top5"]:

@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + LangGraph + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、API Key 鉴权、请求限流、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、API Key 鉴权、请求限流、`search_docs` 检索缓存、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
 
 当前提供三类 Agent API：
 
@@ -65,6 +65,7 @@ search_docs / calculator / get_weather
 | 请求校验 | Pydantic |
 | 接口鉴权 | `X-API-Key` / FastAPI `Depends` / `APP_API_KEY` 环境变量 |
 | 请求限流 | In-memory sliding window / `RATE_LIMIT_WINDOW_SECONDS` / `RATE_LIMIT_MAX_REQUESTS` / `429 Too Many Requests` |
+| RAG 检索缓存 | In-memory retrieval cache / `ENABLE_SEARCH_DOCS_CACHE` / `SEARCH_DOCS_CACHE_TTL_SECONDS` / `cache_hit` |
 | 流式输出 | FastAPI `StreamingResponse` / SSE |
 | Prompt 管理 | `prompts.py` / Prompt V1-V2 对比实验 |
 | 日志与 Trace | JSONL / trace_id / duration_ms / model_calls / tool_calls |
@@ -139,6 +140,61 @@ Chroma 向量召回 top candidate_k
 - 返回结果中包含 `rerank_score` 和 `rerank_mode`，方便观察重排是否生效。
 
 当前默认使用 `keyword`，因为它在当前小规模技术知识库上更快、更稳定；`cross_encoder` 作为可选实验模式保留。早期评估中，加入 keyword rerank baseline 后，Chunk Recall@3 曾从 **85.19%** 提升到 **96.30%**；后续项目继续扩展了 hard case、MRR@3、答案关键点评估和 rerank mode 差异分析。
+
+### 4.1.2 `search_docs` 检索缓存 baseline
+
+项目为 RAG 检索工具 `search_docs` 增加了最小可用的内存缓存，用于减少重复 query 带来的 embedding、Chroma 检索和 rerank 开销。
+
+当前缓存流程：
+
+```text
+用户 query
+  ↓
+构造 cache key
+  ↓
+检查 SEARCH_DOCS_CACHE
+  ↓
+缓存命中：直接返回缓存中的 chunks，并标记 cache_hit=True
+缓存未命中：执行 Chroma 检索 + rerank，写入缓存，并标记 cache_hit=False
+```
+
+缓存配置来自环境变量：
+
+```env
+ENABLE_SEARCH_DOCS_CACHE=true
+SEARCH_DOCS_CACHE_TTL_SECONDS=300
+```
+
+cache key 会包含影响检索结果的关键参数，避免错误复用缓存：
+
+```text
+query
+k
+USE_QUERY_REWRITE
+USE_RERANK
+RERANK_MODE
+```
+
+`search_docs` 返回的每个 chunk 会包含：
+
+```json
+{
+  "cache_hit": true
+}
+```
+
+同时，`/chat` 和 `/chat/langgraph` 的 `tool_calls` 顶层也会记录：
+
+```json
+{
+  "name": "search_docs",
+  "cache_hit": true
+}
+```
+
+`eval/analyze_logs.py` 已支持统计 `Search Docs Cache Hit Count`、`Miss Count`、`Unknown Count` 和 `Hit Rate`，用于观察缓存策略是否真的生效。
+
+> 当前实现是单进程内存版 retrieval cache，适合本地项目和服务原型；生产环境中通常会升级为 Redis 分布式缓存，并把知识库版本、租户 ID、权限过滤条件等加入 cache key，避免缓存污染。
 
 ### 4.2 Function Calling Agent Loop
 
@@ -293,10 +349,11 @@ python eval/analyze_logs.py
 - Agent 类型分布（manual / langgraph / unknown）
 - 按 Agent 类型详细统计
 - 工具调用排行榜
+- `search_docs` 缓存命中次数、未命中次数和命中率
 - 慢请求 Top5
 - 失败请求 trace_id 列表
 
-这部分用于模拟真实 Agent 应用中的基础可观测能力，方便进行慢请求分析、工具调用行为分析和问题定位。
+这部分用于模拟真实 Agent 应用中的基础可观测能力，方便进行慢请求分析、工具调用行为分析、缓存效果观察和问题定位。
 
 ### 4.4.3 MySQL 会话与 Trace 持久化
 
@@ -361,6 +418,9 @@ X-API-Key: your_app_api_key_here
 APP_API_KEY=your_app_api_key_here
 RATE_LIMIT_WINDOW_SECONDS=60
 RATE_LIMIT_MAX_REQUESTS=20
+
+ENABLE_SEARCH_DOCS_CACHE=true
+SEARCH_DOCS_CACHE_TTL_SECONDS=300
 ```
 
 当前接口保护范围：
@@ -676,6 +736,17 @@ RATE_LIMIT_MAX_REQUESTS=20
 
 当前是单进程内存版限流，适合本地和服务原型；生产环境建议升级到 Redis / API Gateway / Nginx 限流。
 
+`search_docs` 检索工具同时支持最小内存缓存：
+
+```env
+ENABLE_SEARCH_DOCS_CACHE=true
+SEARCH_DOCS_CACHE_TTL_SECONDS=300
+```
+
+含义是：相同 query 和相同检索配置在 300 秒内重复请求时，可以直接复用上一次的检索结果。返回结果和 `tool_calls` 中会带有 `cache_hit` 字段，便于通过日志分析缓存命中率。
+
+当前是单进程内存版 retrieval cache，适合本地和服务原型；生产环境建议升级到 Redis，并将知识库版本、用户权限、租户 ID 等因素纳入 cache key。
+
 ---
 
 ### 6.7 调用 `/chat`
@@ -841,14 +912,11 @@ langgraph: 请求数=...，成功率=...，平均总耗时=... ms，平均模型
 search_docs: ...
 calculator: ...
 
-========== Agent 类型分布 ==========
-manual: ...
-langgraph: ...
-unknown: ...
-
-========== 按 Agent 类型统计 ==========
-manual: 请求数=...，成功率=...，平均总耗时=... ms，平均模型调用次数=...，平均工具调用次数=...
-langgraph: 请求数=...，成功率=...，平均总耗时=... ms，平均模型调用次数=...，平均工具调用次数=...
+========== Search Docs Cache ==========
+Search Docs Cache Hit Count：...
+Search Docs Cache Miss Count：...
+Search Docs Cache Unknown Count：...
+Search Docs Cache Hit Rate：...
 
 ========== 慢请求 Top5 ==========
 1. trace_id=... duration_ms=... question=...
@@ -857,7 +925,7 @@ langgraph: 请求数=...，成功率=...，平均总耗时=... ms，平均模型
 暂无失败请求
 ```
 
-该脚本用于把单条 Agent trace 汇总成整体 Metrics，方便分析系统成功率、平均耗时、工具使用分布和慢请求。
+该脚本用于把单条 Agent trace 汇总成整体 Metrics，方便分析系统成功率、平均耗时、工具使用分布、`search_docs` 缓存命中率和慢请求。
 
 示例输出（会随日志增长而变化）：
 
@@ -879,6 +947,12 @@ langgraph: 1
 search_docs: 65
 calculator: 26
 get_weather: 13
+
+========== Search Docs Cache ==========
+Search Docs Cache Hit Count：2
+Search Docs Cache Miss Count：1
+Search Docs Cache Unknown Count：360
+Search Docs Cache Hit Rate：66.67%
 
 ========== 慢请求 Top5 ==========
 1. trace_id=... duration_ms=... question=...
@@ -944,6 +1018,8 @@ X-API-Key: your_app_api_key_here
 APP_API_KEY=your_app_api_key_here
 RATE_LIMIT_WINDOW_SECONDS=60
 RATE_LIMIT_MAX_REQUESTS=20
+ENABLE_SEARCH_DOCS_CACHE=true
+SEARCH_DOCS_CACHE_TTL_SECONDS=300
 ```
 
 ### `POST /chat`
@@ -988,10 +1064,12 @@ RATE_LIMIT_MAX_REQUESTS=20
           "source": "rag_notes.md",
           "chunk_id": "rag_notes.md::chunk_001",
           "chunk_index": 1,
-          "content": "..."
+          "content": "...",
+          "cache_hit": false
         }
       ],
-      "duration_ms": 300
+      "duration_ms": 300,
+      "cache_hit": false
     }
   ],
   "sources": ["rag_notes.md"],
@@ -1355,7 +1433,7 @@ POST /chat/langgraph
 1. 已接入 CrossEncoder reranker baseline，但在当前小规模知识库上未优于 keyword rerank，后续需要在更大文档规模和更复杂 query 上继续验证
 2. 评估已覆盖工具调用、source 命中、chunk-level Recall@k、MRR@3、答案关键点命中、Citation Faithfulness baseline、rerank mode 差异分析和 Prompt V1/V2 对比，但还没有覆盖严格引用一致性、幻觉检测和 LLM-as-Judge
 3. 天气工具是模拟数据
-4. 核心聊天接口已接入 API Key 鉴权和单进程内存版请求限流，但尚未实现用户体系、角色权限和 Redis 分布式限流
+4. 核心聊天接口已接入 API Key 鉴权、单进程内存版请求限流和 `search_docs` 内存缓存，但尚未实现用户体系、角色权限、Redis 分布式限流和 Redis 分布式缓存
 5. 尚未接入前端
 6. Trace 和 Metrics 已支持 JSONL 日志分析与 MySQL 查询脚本，但尚未接入可视化面板、告警或 OpenTelemetry
 7. LangGraph 的会话、消息、Trace 和工具调用已接入 MySQL 持久化，但 checkpoint 目前仍是内存级 InMemorySaver，尚未持久化到数据库级 checkpointer
@@ -1372,7 +1450,7 @@ POST /chat/langgraph
 2. 继续扩展 hard case，覆盖更多真实业务问题和多文档综合问题
 3. 继续扩展 reranker 实验：调大 candidate_k、扩展真实业务文档、对比更多 reranker 模型
 4. 将 Prompt 对比扩展为更多真实业务 case，并继续观察 V2 在复杂问题下的稳定性
-5. 在当前内存版 Rate Limit 基础上升级 Redis 分布式限流，并继续增加更细粒度权限控制
+5. 将当前内存版 Rate Limit 和 `search_docs` cache 升级为 Redis 分布式限流 / 分布式缓存，并继续增加更细粒度权限控制
 6. 将 MySQL Trace 查询能力扩展为可视化面板或 OpenTelemetry 链路追踪
 7. 将 LangGraph checkpoint 从 InMemorySaver 升级为数据库持久化 checkpointer
 8. 将 `/chat/stream` 升级为真正的模型 token 级 streaming

@@ -192,6 +192,14 @@ def call_tools(state: GraphState) -> dict:
         print("工具执行结果：", function_response)
         print("工具耗时(ms)：", tool_duration_ms)
 
+        search_docs_cache_hit = None
+
+        if function_name == "search_docs" and isinstance(function_response, list):
+            search_docs_cache_hit = bool(function_response) and all(
+                item.get("cache_hit") is True
+                for item in function_response
+            )
+
         # 保存结构化工具调用记录。
         # 这和 agent.py 里的 tool_call_records 思路一致。
         tool_call_records.append(
@@ -200,6 +208,7 @@ def call_tools(state: GraphState) -> dict:
                 "args": function_args,
                 "result": function_response,
                 "duration_ms": tool_duration_ms,
+                "cache_hit": search_docs_cache_hit,
             }
         )
         
