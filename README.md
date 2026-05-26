@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + LangGraph + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、API Key 鉴权、请求限流、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
 
 当前提供三类 Agent API：
 
@@ -64,6 +64,7 @@ search_docs / calculator / get_weather
 | API 服务 | FastAPI |
 | 请求校验 | Pydantic |
 | 接口鉴权 | `X-API-Key` / FastAPI `Depends` / `APP_API_KEY` 环境变量 |
+| 请求限流 | In-memory sliding window / `RATE_LIMIT_WINDOW_SECONDS` / `RATE_LIMIT_MAX_REQUESTS` / `429 Too Many Requests` |
 | 流式输出 | FastAPI `StreamingResponse` / SSE |
 | Prompt 管理 | `prompts.py` / Prompt V1-V2 对比实验 |
 | 日志与 Trace | JSONL / trace_id / duration_ms / model_calls / tool_calls |
@@ -344,9 +345,9 @@ python eval/query_db_traces.py
 
 这部分让项目从“只写本地 JSONL 日志”升级为“可结构化落库、可查询、可回放、可分析”的 AI 后端服务原型。
 
-### 4.4.4 API Key 鉴权
+### 4.4.4 API Key 鉴权与请求限流
 
-项目为核心聊天接口增加了轻量 API Key 鉴权，避免模型接口裸露调用。
+项目为核心聊天接口增加了轻量 API Key 鉴权和请求限流，避免模型接口裸露调用、被恶意刷请求或短时间触发过多模型调用成本。
 
 鉴权方式：
 
@@ -358,6 +359,8 @@ X-API-Key: your_app_api_key_here
 
 ```env
 APP_API_KEY=your_app_api_key_here
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_MAX_REQUESTS=20
 ```
 
 当前接口保护范围：
@@ -378,6 +381,26 @@ APP_API_KEY=your_app_api_key_here
 ```
 
 状态码为 `401 Unauthorized`。
+
+如果同一个 API Key 在配置窗口期内请求过多，接口返回：
+
+```json
+{
+  "detail": "Too Many Requests"
+}
+```
+
+状态码为 `429 Too Many Requests`。
+
+当前限流策略：
+
+- 维度：按 `X-API-Key` 限流；
+- 算法：应用内存版 sliding window；
+- 默认配置：每 60 秒最多 20 次请求；
+- 保护范围：`/chat`、`/chat/stream`、`/chat/langgraph`；
+- `/health` 不鉴权、不限流，保留给部署平台和监控系统探活。
+
+> 当前实现适合个人项目、本地 Demo 和单进程服务原型。生产环境中通常会升级为 Redis 分布式限流、Nginx / API Gateway 限流，或结合用户 ID、IP、租户维度做更细粒度的配额控制。
 
 ### 4.5 Agent 与 RAG 评估
 
@@ -556,6 +579,9 @@ MYSQL_DATABASE=rag_agent
 MYSQL_CHARSET=utf8mb4
 
 APP_API_KEY=your_app_api_key_here
+
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_MAX_REQUESTS=20
 ```
 
 > 注意：不要把真实 API Key、MySQL 密码等敏感信息提交到 GitHub。
@@ -629,7 +655,7 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-### 6.6 API Key 鉴权说明
+### 6.6 API Key 鉴权与请求限流说明
 
 除 `/health` 外，核心聊天接口都需要携带 `X-API-Key`：
 
@@ -638,6 +664,17 @@ X-API-Key: your_app_api_key_here
 ```
 
 如果未携带或 key 错误，会返回 `401 Unauthorized`。
+
+核心聊天接口同时启用了请求限流：
+
+```env
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_MAX_REQUESTS=20
+```
+
+含义是：同一个 API Key 在 60 秒内最多请求 20 次。超过限制会返回 `429 Too Many Requests`。
+
+当前是单进程内存版限流，适合本地和服务原型；生产环境建议升级到 Redis / API Gateway / Nginx 限流。
 
 ---
 
@@ -889,7 +926,7 @@ docker run --rm -p 8000:8000 --env-file .env rag-agent-demo
 
 ---
 
-### 鉴权说明
+### 鉴权与限流说明
 
 除 `GET /health` 外，以下聊天接口都需要请求头：
 
@@ -898,6 +935,16 @@ X-API-Key: your_app_api_key_here
 ```
 
 未携带或 key 错误会返回 `401 Unauthorized`。
+
+同一个 API Key 在限流窗口内请求过多会返回 `429 Too Many Requests`。
+
+相关配置：
+
+```env
+APP_API_KEY=your_app_api_key_here
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_MAX_REQUESTS=20
+```
 
 ### `POST /chat`
 
@@ -1308,7 +1355,7 @@ POST /chat/langgraph
 1. 已接入 CrossEncoder reranker baseline，但在当前小规模知识库上未优于 keyword rerank，后续需要在更大文档规模和更复杂 query 上继续验证
 2. 评估已覆盖工具调用、source 命中、chunk-level Recall@k、MRR@3、答案关键点命中、Citation Faithfulness baseline、rerank mode 差异分析和 Prompt V1/V2 对比，但还没有覆盖严格引用一致性、幻觉检测和 LLM-as-Judge
 3. 天气工具是模拟数据
-4. 核心聊天接口已接入 API Key 鉴权，但尚未实现用户体系、角色权限和限流
+4. 核心聊天接口已接入 API Key 鉴权和单进程内存版请求限流，但尚未实现用户体系、角色权限和 Redis 分布式限流
 5. 尚未接入前端
 6. Trace 和 Metrics 已支持 JSONL 日志分析与 MySQL 查询脚本，但尚未接入可视化面板、告警或 OpenTelemetry
 7. LangGraph 的会话、消息、Trace 和工具调用已接入 MySQL 持久化，但 checkpoint 目前仍是内存级 InMemorySaver，尚未持久化到数据库级 checkpointer
@@ -1325,7 +1372,7 @@ POST /chat/langgraph
 2. 继续扩展 hard case，覆盖更多真实业务问题和多文档综合问题
 3. 继续扩展 reranker 实验：调大 candidate_k、扩展真实业务文档、对比更多 reranker 模型
 4. 将 Prompt 对比扩展为更多真实业务 case，并继续观察 V2 在复杂问题下的稳定性
-5. 在 API Key 鉴权基础上继续增加请求限流和更细粒度权限控制
+5. 在当前内存版 Rate Limit 基础上升级 Redis 分布式限流，并继续增加更细粒度权限控制
 6. 将 MySQL Trace 查询能力扩展为可视化面板或 OpenTelemetry 链路追踪
 7. 将 LangGraph checkpoint 从 InMemorySaver 升级为数据库持久化 checkpointer
 8. 将 `/chat/stream` 升级为真正的模型 token 级 streaming

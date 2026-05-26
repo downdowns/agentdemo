@@ -83,6 +83,11 @@ app = FastAPI(
     version="0.1.0",
 )
 
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_MAX_REQUESTS = int(os.getenv("RATE_LIMIT_MAX_REQUESTS", "20"))
+
+RATE_LIMIT_BUCKETS: dict[str, list[float]] = {}
+
 def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
     """校验 API Key。
 
@@ -106,7 +111,38 @@ def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
             status_code=401,
             detail="Invalid API Key",
         )
+    
+    check_rate_limit(x_api_key)
 
+def check_rate_limit(api_key: str) -> None:
+    """检查 API Key 是否超过请求频率限制。
+
+    当前实现是单进程内存版滑动窗口：
+    - 每个 API Key 对应一个请求时间列表；
+    - 每次请求时清理窗口外的旧时间；
+    - 如果窗口内请求次数达到上限，则返回 429。
+    """
+
+    now = time.time()
+    window_start = now - RATE_LIMIT_WINDOW_SECONDS
+
+    request_times = RATE_LIMIT_BUCKETS.get(api_key, [])
+
+    # 只保留当前窗口内的请求时间。
+    request_times = [
+        request_time
+        for request_time in request_times
+        if request_time >= window_start
+    ]
+
+    if len(request_times) >= RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too Many Requests",
+        )
+
+    request_times.append(now)
+    RATE_LIMIT_BUCKETS[api_key] = request_times
 
 @app.get("/health")
 def health_check() -> dict:
