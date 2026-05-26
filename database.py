@@ -4,13 +4,14 @@
 1. 读取 MySQL 配置；
 2. 创建数据库连接；
 3. 初始化表结构；
-4. 保存 LangGraph Agent 的会话、消息、Trace 和工具调用记录。
+4. 保存 LangGraph Agent 的会话、消息、Trace、工具调用记录和用户反馈。
 
-当前 49.3-B 只完成第一步：读取配置。
+这些数据用于支撑 Agent 可观测性、问题排查和 feedback 数据飞轮。
 """
 
 import os
 import json
+import uuid
 import pymysql
 from dataclasses import dataclass
 
@@ -135,6 +136,23 @@ def init_db():
     );
     """
 
+    create_feedback_logs_sql = """
+    CREATE TABLE IF NOT EXISTS feedback_logs (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        feedback_id VARCHAR(64) NOT NULL UNIQUE,
+        trace_id VARCHAR(64) NOT NULL,
+        session_id VARCHAR(128),
+        rating VARCHAR(16) NOT NULL,
+        comment TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+        INDEX idx_trace_id (trace_id),
+        INDEX idx_session_id (session_id),
+        INDEX idx_rating (rating),
+        INDEX idx_created_at (created_at)
+    );
+    """
+
     connection = get_connection()
 
     try:
@@ -143,6 +161,7 @@ def init_db():
             cursor.execute(create_chat_messages_sql)
             cursor.execute(create_agent_traces_sql)
             cursor.execute(create_tool_call_logs_sql)
+            cursor.execute(create_feedback_logs_sql)
 
         connection.commit()
         print("All database tables initialized")
@@ -369,6 +388,67 @@ def save_tool_call_log(
             cursor.execute(sql, params)
 
         connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+def save_feedback(
+    trace_id: str,
+    rating: str,
+    session_id: str | None = None,
+    comment: str | None = None,
+    feedback_id: str | None = None,
+) -> str:
+    """保存用户对某次 Agent 回答的反馈。
+
+    feedback_logs 表保存的是“用户反馈级别”的数据：
+    - trace_id：用户评价的是哪一次 Agent 请求
+    - session_id：这次反馈属于哪个会话
+    - rating：up / down
+    - comment：用户补充说明
+
+    返回 feedback_id，方便 API 返回给前端或调用方。
+    """
+
+    rating = rating.strip().lower()
+
+    if rating not in {"up", "down"}:
+        raise ValueError("rating 只能是 up 或 down")
+
+    if feedback_id is None:
+        feedback_id = uuid.uuid4().hex
+
+    sql = """
+    INSERT INTO feedback_logs (
+        feedback_id,
+        trace_id,
+        session_id,
+        rating,
+        comment
+    )
+    VALUES (%s, %s, %s, %s, %s);
+    """
+
+    params = (
+        feedback_id,
+        trace_id,
+        session_id,
+        rating,
+        comment,
+    )
+
+    connection = get_connection()
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(sql, params)
+
+        connection.commit()
+        return feedback_id
 
     except Exception:
         connection.rollback()

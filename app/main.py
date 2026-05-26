@@ -7,6 +7,7 @@
 - POST /chat：聊天接口，接收用户问题并调用 run_agent() 返回结构化结果。
 - POST /chat/stream：流式聊天接口，使用 SSE 结构化事件逐段返回最终回答。
 - POST /chat/langgraph：LangGraph Agent 接口，支持 session_id 有状态会话。
+- POST /feedback：用户反馈接口，用于提交 up/down 和 comment，形成数据飞轮。
 
 启动方式：
     uvicorn app.main:app --reload
@@ -36,6 +37,7 @@ from database import (
     save_agent_trace,
     save_chat_message,
     save_chat_session,
+    save_feedback,
     save_tool_call_log,
 )
 
@@ -74,6 +76,25 @@ class LangGraphChatRequest(BaseModel):
     message: str
     session_id: str = "demo-thread"
 
+
+class FeedbackRequest(BaseModel):
+    """用户反馈请求体。
+
+    客户端请求 /feedback 时，需要传入：
+    {
+        "trace_id": "某次 Agent 请求的 trace_id",
+        "session_id": "可选，会话 ID",
+        "rating": "up 或 down",
+        "comment": "可选，用户补充说明"
+    }
+
+    trace_id 用来把用户反馈和一次 Agent 执行链路关联起来。
+    """
+
+    trace_id: str
+    rating: str
+    session_id: str | None = None
+    comment: str | None = None
 
 # 创建 FastAPI 应用对象。
 # title / description / version 会展示在 Swagger 文档中。
@@ -154,6 +175,58 @@ def health_check() -> dict:
         "status": "ok",
         "service": "rag-agent-api",
     }
+
+
+@app.post("/feedback")
+def submit_feedback(
+    request: FeedbackRequest,
+    _: None = Depends(verify_api_key),
+) -> dict:
+    """提交用户反馈。
+
+    这个接口用于数据飞轮：
+    - 用户对某次回答点赞/点踩；
+    - 服务端保存 trace_id、session_id、rating、comment；
+    - 后续可以根据差评 trace_id 回看 Agent 执行链路。
+    """
+    trace_id = request.trace_id.strip()
+    rating = request.rating.strip().lower()
+    session_id = request.session_id.strip() if request.session_id else None
+    comment = request.comment.strip() if request.comment else None
+
+    if not trace_id:
+        raise HTTPException(
+            status_code=400,
+            detail="trace_id 不能为空",
+        )
+
+    if rating not in {"up", "down"}:
+        raise HTTPException(
+            status_code=400,
+            detail="rating 只能是 up 或 down",
+        )
+
+    try:
+        feedback_id = save_feedback(
+            trace_id=trace_id,
+            session_id=session_id,
+            rating=rating,
+            comment=comment,
+        )
+
+        return {
+            "success": True,
+            "feedback_id": feedback_id,
+            "trace_id": trace_id,
+            "session_id": session_id,
+            "rating": rating,
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"反馈保存失败：{str(e)}",
+        )
 
 
 @app.post("/chat")

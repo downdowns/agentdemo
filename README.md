@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + LangGraph + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、API Key 鉴权、请求限流、`search_docs` 检索缓存、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、Feedback 数据飞轮 baseline、API Key 鉴权、请求限流、`search_docs` 检索缓存、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
 
 当前提供三类 Agent API：
 
@@ -11,6 +11,12 @@
 | `POST /chat` | 手写 Agent Loop | 流程透明，便于调试和观测工具调用链路 |
 | `POST /chat/stream` | 手写 Agent Loop + SSE | 返回 `metadata` / `answer_delta` / `done` / `error` 流式事件 |
 | `POST /chat/langgraph` | LangGraph Agent | 支持 checkpoint、session_id 有状态会话、多会话隔离、quality_check 质检 |
+
+同时提供数据飞轮接口：
+
+| 接口 | 用途 |
+|---|---|
+| `POST /feedback` | 针对某次 `trace_id` 提交 up/down 和 comment，沉淀 bad case |
 
 > 项目定位：面向企业知识库问答场景的 RAG Agent 后端服务原型。
 
@@ -70,7 +76,8 @@ search_docs / calculator / get_weather
 | Prompt 管理 | `prompts.py` / Prompt V1-V2 对比实验 |
 | 日志与 Trace | JSONL / trace_id / duration_ms / model_calls / tool_calls |
 | 数据持久化 | MySQL / PyMySQL / session / message / trace / tool call tables |
-| Metrics 分析 | `eval/analyze_logs.py` / `eval/query_db_traces.py` |
+| Feedback 数据飞轮 | `POST /feedback` / `feedback_logs` / `eval/query_feedback.py` |
+| Metrics 分析 | `eval/analyze_logs.py` / `eval/query_db_traces.py` / `eval/query_feedback.py` |
 | 评估 | 自定义 eval 脚本 / Recall@k / MRR@3 / Answer Point Hit Rate / rerank mode 差异分析 |
 
 ---
@@ -357,9 +364,9 @@ python eval/analyze_logs.py
 
 ### 4.4.3 MySQL 会话与 Trace 持久化
 
-项目以 `/chat/langgraph` 作为主线 Agent 接口，接入 MySQL 持久化能力，将 LangGraph Agent 的会话、消息、请求 Trace 和工具调用记录结构化保存，便于后续查询、回放和问题排查。
+项目以 `/chat/langgraph` 作为主线 Agent 接口，接入 MySQL 持久化能力，将 LangGraph Agent 的会话、消息、请求 Trace、工具调用记录和用户反馈结构化保存，便于后续查询、回放、问题排查和 bad case 沉淀。
 
-当前设计 4 张核心表：
+当前设计 5 张核心表：
 
 | 表名 | 作用 |
 |---|---|
@@ -367,6 +374,7 @@ python eval/analyze_logs.py
 | `chat_messages` | 保存用户消息和助手回答，支持按 `session_id` 回放聊天历史 |
 | `agent_traces` | 保存一次 Agent 请求的整体追踪信息，包括 `trace_id`、用户问题、最终回答、sources、model_calls、quality_check、耗时和成功失败状态 |
 | `tool_call_logs` | 保存每一次工具调用的名称、参数、结果、耗时、成功失败状态和错误信息 |
+| `feedback_logs` | 保存用户对某次回答的 up/down、comment、trace_id 和 session_id |
 
 `/chat/langgraph` 的落库流程：
 
@@ -386,6 +394,24 @@ run_graph_agent 执行 LangGraph 工作流
 返回结构化 JSON
 ```
 
+`/feedback` 的数据飞轮流程：
+
+```text
+用户收到 Agent 回答
+  ↓
+用户针对 trace_id 提交 up/down/comment
+  ↓
+保存到 feedback_logs
+  ↓
+通过 eval/query_feedback.py 查询差评样本
+  ↓
+根据 trace_id 回看 agent_traces / tool_call_logs / chat_messages
+  ↓
+判断问题来自文档缺失、检索召回、rerank、Prompt、工具调用还是模型幻觉
+  ↓
+将典型 bad case 沉淀进 eval/questions.json
+```
+
 项目新增数据库查询脚本：
 
 ```bash
@@ -399,6 +425,20 @@ python eval/query_db_traces.py
 - 查询失败请求
 - 根据 `trace_id` 查询工具调用明细
 - 根据 `session_id` 查询聊天历史
+
+反馈查询脚本：
+
+```bash
+python eval/query_feedback.py
+```
+
+当前支持：
+
+- 反馈总数
+- 点赞数 / 点踩数
+- 好评率
+- 最近反馈列表
+- 最近差评样本 Top10，并关联原始问题和 Agent 回答
 
 这部分让项目从“只写本地 JSONL 日志”升级为“可结构化落库、可查询、可回放、可分析”的 AI 后端服务原型。
 
@@ -577,7 +617,8 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 │   ├── questions.json           # 评估问题集
 │   ├── run_eval.py              # 工具调用、RAG 检索、MRR、答案关键点、Citation Faithfulness、rerank mode 对比评估脚本
 │   ├── analyze_logs.py          # 读取 JSONL trace，统计 Metrics 和慢请求
-│   └── query_db_traces.py       # 查询 MySQL 中的 trace、慢请求、失败请求、工具调用和聊天历史
+│   ├── query_db_traces.py       # 查询 MySQL 中的 trace、慢请求、失败请求、工具调用和聊天历史
+│   └── query_feedback.py        # 查询用户反馈、好评率和差评 bad case
 ├── examples/                    # 命令行调试和基础示例
 │   ├── rag_cli.py
 │   ├── langgraph_cli.py
@@ -671,6 +712,7 @@ chat_sessions
 chat_messages
 agent_traces
 tool_call_logs
+feedback_logs
 ```
 
 ---
@@ -834,7 +876,38 @@ curl -X POST http://127.0.0.1:8000/chat/langgraph \
 
 ---
 
-### 6.10 运行评估脚本
+### 6.10 提交 `/feedback`
+
+`/feedback` 用于给某次 Agent 回答提交用户反馈，形成最小数据飞轮。
+
+```bash
+curl -X POST http://127.0.0.1:8000/feedback \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your_app_api_key_here" \
+  -d '{
+    "trace_id": "your_trace_id_here",
+    "session_id": "feedback-test-001",
+    "rating": "down",
+    "comment": "回答没有引用正确文档"
+  }'
+```
+
+`rating` 当前只支持：
+
+```text
+up
+down
+```
+
+查询反馈统计：
+
+```bash
+python eval/query_feedback.py
+```
+
+---
+
+### 6.11 运行评估脚本
 
 ```bash
 python eval/run_eval.py
@@ -879,7 +952,7 @@ python eval/run_eval.py --compare-prompts
 
 ---
 
-### 6.11 分析 Agent Trace 日志
+### 6.12 分析 Agent Trace 日志
 
 运行日志分析脚本：
 
@@ -965,7 +1038,7 @@ Search Docs Cache Hit Rate：66.67%
 
 ---
 
-### 6.12 Docker 容器化启动
+### 6.13 Docker 容器化启动
 
 如果你本地已经安装并启动 Docker，可以直接用容器方式运行项目：
 
@@ -1002,7 +1075,7 @@ docker run --rm -p 8000:8000 --env-file .env rag-agent-demo
 
 ### 鉴权与限流说明
 
-除 `GET /health` 外，以下聊天接口都需要请求头：
+除 `GET /health` 外，聊天接口和反馈接口都需要请求头：
 
 ```text
 X-API-Key: your_app_api_key_here
@@ -1212,6 +1285,52 @@ LangGraph Agent 聊天接口。
 
 ---
 
+### `POST /feedback`
+
+提交用户反馈接口。
+
+请求：
+
+```json
+{
+  "trace_id": "c2b4f8f34f0f4fa5a0c1f2ab3c6d8e77",
+  "session_id": "user-a",
+  "rating": "down",
+  "comment": "回答没有引用正确文档"
+}
+```
+
+字段说明：
+
+| 字段 | 含义 |
+|---|---|
+| `trace_id` | 被评价的那次 Agent 请求 ID |
+| `session_id` | 可选，会话 ID |
+| `rating` | `up` 或 `down` |
+| `comment` | 可选，用户文字反馈 |
+
+响应：
+
+```json
+{
+  "success": true,
+  "feedback_id": "50f87b013b064e49a1d39cd52163ae80",
+  "trace_id": "c2b4f8f34f0f4fa5a0c1f2ab3c6d8e77",
+  "session_id": "user-a",
+  "rating": "down"
+}
+```
+
+错误响应：
+
+```json
+{
+  "detail": "rating 只能是 up 或 down"
+}
+```
+
+---
+
 ## 8. 项目亮点
 
 ### 8.1 RAG 被封装为 Agent 工具
@@ -1269,7 +1388,27 @@ search_docs + calculator
 
 同时通过 `eval/analyze_logs.py` 对 Agent 运行日志进行 Metrics 分析，补充运行层面的成功率、平均耗时、工具使用分布和慢请求排查能力。
 
-### 8.5 SSE 流式输出
+### 8.5 Feedback 数据飞轮 baseline
+
+项目新增 `POST /feedback` 和 `feedback_logs` 表，将用户对某次回答的 up/down/comment 与 `trace_id` 关联起来。
+
+这使得项目可以形成最小数据飞轮：
+
+```text
+Agent 回答
+  ↓
+用户反馈 up/down/comment
+  ↓
+根据 trace_id 回看问题、回答、工具调用、sources、cache_hit
+  ↓
+定位问题来自文档、检索、rerank、Prompt、工具还是模型幻觉
+  ↓
+把典型 bad case 加入 eval/questions.json
+```
+
+`eval/query_feedback.py` 可以统计反馈总数、点赞数、点踩数、好评率，并列出最近差评样本，便于后续优化知识库、Prompt 和评估集。
+
+### 8.6 SSE 流式输出
 
 项目新增：
 
@@ -1291,7 +1430,7 @@ error -> done
 
 当前实现属于“应用层 streaming”：Agent 仍然先完整完成工具调用和最终回答生成，然后把最终 `answer` 分段推送给客户端。这样能先建立真实大模型产品常见的流式接口形态，后续可以升级为模型 token 级 streaming。
 
-### 8.6 LangGraph Quality Check 节点
+### 8.7 LangGraph Quality Check 节点
 
 LangGraph 版本在基础 `model → tools → model` 流程后新增了一个 `quality_check` 节点：
 
@@ -1333,7 +1472,7 @@ START → model → conditional edge
 
 这个节点让 LangGraph 版本不只是手写 Agent Loop 的等价改写，而是体现了图工作流可以继续扩展“生成后质检、人工审核、风险控制、审计记录”等节点。
 
-### 8.7 LangGraph 有状态 Agent 工作流
+### 8.8 LangGraph 有状态 Agent 工作流
 
 项目中包含：
 
@@ -1410,7 +1549,7 @@ POST /chat/langgraph
 
 ---
 
-### 8.8 手写 Agent 和 LangGraph Agent 对比
+### 8.9 手写 Agent 和 LangGraph Agent 对比
 
 | 能力 | `/chat` 手写 Agent | `/chat/langgraph` LangGraph Agent |
 |---|---|---|
@@ -1437,8 +1576,9 @@ POST /chat/langgraph
 5. 尚未接入前端
 6. Trace 和 Metrics 已支持 JSONL 日志分析与 MySQL 查询脚本，但尚未接入可视化面板、告警或 OpenTelemetry
 7. LangGraph 的会话、消息、Trace 和工具调用已接入 MySQL 持久化，但 checkpoint 目前仍是内存级 InMemorySaver，尚未持久化到数据库级 checkpointer
-8. `/chat/stream` 当前是应用层流式返回，还不是模型 token 级 streaming
-9. 尚未接入 vLLM 本地模型部署
+8. Feedback 数据飞轮已支持 up/down/comment 和差评查询，但尚未支持 bad case 自动归因、聚类和人工审核流
+9. `/chat/stream` 当前是应用层流式返回，还不是模型 token 级 streaming
+10. 尚未接入 vLLM 本地模型部署
 
 ---
 
@@ -1451,11 +1591,12 @@ POST /chat/langgraph
 3. 继续扩展 reranker 实验：调大 candidate_k、扩展真实业务文档、对比更多 reranker 模型
 4. 将 Prompt 对比扩展为更多真实业务 case，并继续观察 V2 在复杂问题下的稳定性
 5. 将当前内存版 Rate Limit 和 `search_docs` cache 升级为 Redis 分布式限流 / 分布式缓存，并继续增加更细粒度权限控制
-6. 将 MySQL Trace 查询能力扩展为可视化面板或 OpenTelemetry 链路追踪
-7. 将 LangGraph checkpoint 从 InMemorySaver 升级为数据库持久化 checkpointer
-8. 将 `/chat/stream` 升级为真正的模型 token 级 streaming
-9. 接入 vLLM 部署本地 Qwen 小模型
-10. 增加前端页面
-11. 接入真实天气 / 搜索 / 数据库工具
+6. 给 feedback 差评样本增加问题归因字段，例如 retrieval_miss / rerank_error / document_missing / prompt_issue / hallucination
+7. 将 MySQL Trace 查询能力扩展为可视化面板或 OpenTelemetry 链路追踪
+8. 将 LangGraph checkpoint 从 InMemorySaver 升级为数据库持久化 checkpointer
+9. 将 `/chat/stream` 升级为真正的模型 token 级 streaming
+10. 接入 vLLM 部署本地 Qwen 小模型
+11. 增加前端页面
+12. 接入真实天气 / 搜索 / 数据库工具
 
 ---
