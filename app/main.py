@@ -31,6 +31,12 @@ sys.path.append(str(PROJECT_ROOT))
 # FastAPI 接口收到请求后，会把用户问题交给 run_agent 处理。
 from agent_workflows.langgraph_agent import run_graph_agent
 from agent import run_agent
+from database import (
+    save_agent_trace,
+    save_chat_message,
+    save_chat_session,
+    save_tool_call_log,
+)
 
 
 class ChatRequest(BaseModel):
@@ -234,8 +240,11 @@ def chat_langgraph(request: LangGraphChatRequest) -> dict:
     - 多会话隔离
     - tool_calls / sources 跨轮累积
     """
+    message = request.message.strip()
+    session_id = request.session_id.strip()
+
     # 校验用户问题不能为空。
-    if not request.message.strip():
+    if not message:
         raise HTTPException(
             status_code=400,
             detail="message 不能为空",
@@ -243,7 +252,7 @@ def chat_langgraph(request: LangGraphChatRequest) -> dict:
 
     # session_id 不能为空。
     # 如果为空，LangGraph checkpointer 无法可靠地区分会话。
-    if not request.session_id.strip():
+    if not session_id:
         raise HTTPException(
             status_code=400,
             detail="session_id 不能为空",
@@ -254,12 +263,69 @@ def chat_langgraph(request: LangGraphChatRequest) -> dict:
         # LangGraph 层叫 thread_id，是 checkpointer 用来区分状态的字段。
         # 这里完成 session_id -> thread_id 的映射。
         result = run_graph_agent(
-            user_query=request.message,
-            thread_id=request.session_id,
+            user_query=message,
+            thread_id=session_id,
         )
-        return result
+
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"LangGraph Agent 执行失败：{str(e)}",
         )
+
+    try:
+        # 这里保存数据库
+        trace_id = result.get("trace_id")
+        answer = result.get("answer", "")
+
+        save_chat_session(
+            session_id=session_id,
+            agent_type="langgraph",
+        )
+
+        save_chat_message(
+            session_id=session_id,
+            trace_id=trace_id,
+            role="user",
+            content=message,
+        )
+
+        save_chat_message(
+            session_id=session_id,
+            trace_id=trace_id,
+            role="assistant",
+            content=answer,
+        )
+
+        save_agent_trace(
+            trace_id=trace_id,
+            session_id=session_id,
+            user_query=message,
+            answer=answer,
+            sources=result.get("sources", []),
+            model_calls=result.get("model_calls", []),
+            quality_check=result.get("quality_check", {}),
+            duration_ms=result.get("duration_ms"),
+            success=result.get("success", True),
+            error=result.get("error"),
+            agent_type="langgraph",
+        )
+
+        for tool_call in result.get("tool_calls", []):
+            save_tool_call_log(
+                trace_id=trace_id,
+                session_id=session_id,
+                tool_name=tool_call.get("name", "unknown"),
+                tool_args=tool_call.get("args"),
+                tool_result=tool_call.get("result"),
+                duration_ms=tool_call.get("duration_ms"),
+                success=tool_call.get("success", True),
+                error=tool_call.get("error"),
+            )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LangGraph Agent 数据库保存失败：{str(e)}",
+        )
+    
+    return result

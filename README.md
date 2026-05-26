@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + LangGraph + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
 
 当前提供三类 Agent API：
 
@@ -66,7 +66,8 @@ search_docs / calculator / get_weather
 | 流式输出 | FastAPI `StreamingResponse` / SSE |
 | Prompt 管理 | `prompts.py` / Prompt V1-V2 对比实验 |
 | 日志与 Trace | JSONL / trace_id / duration_ms / model_calls / tool_calls |
-| Metrics 分析 | `eval/analyze_logs.py` |
+| 数据持久化 | MySQL / PyMySQL / session / message / trace / tool call tables |
+| Metrics 分析 | `eval/analyze_logs.py` / `eval/query_db_traces.py` |
 | 评估 | 自定义 eval 脚本 / Recall@k / MRR@3 / Answer Point Hit Rate / rerank mode 差异分析 |
 
 ---
@@ -295,6 +296,53 @@ python eval/analyze_logs.py
 
 这部分用于模拟真实 Agent 应用中的基础可观测能力，方便进行慢请求分析、工具调用行为分析和问题定位。
 
+### 4.4.3 MySQL 会话与 Trace 持久化
+
+项目以 `/chat/langgraph` 作为主线 Agent 接口，接入 MySQL 持久化能力，将 LangGraph Agent 的会话、消息、请求 Trace 和工具调用记录结构化保存，便于后续查询、回放和问题排查。
+
+当前设计 4 张核心表：
+
+| 表名 | 作用 |
+|---|---|
+| `chat_sessions` | 保存会话 ID、Agent 类型、创建时间和更新时间 |
+| `chat_messages` | 保存用户消息和助手回答，支持按 `session_id` 回放聊天历史 |
+| `agent_traces` | 保存一次 Agent 请求的整体追踪信息，包括 `trace_id`、用户问题、最终回答、sources、model_calls、quality_check、耗时和成功失败状态 |
+| `tool_call_logs` | 保存每一次工具调用的名称、参数、结果、耗时、成功失败状态和错误信息 |
+
+`/chat/langgraph` 的落库流程：
+
+```text
+用户请求 /chat/langgraph
+  ↓
+run_graph_agent 执行 LangGraph 工作流
+  ↓
+保存 chat_sessions
+  ↓
+保存 user / assistant 消息到 chat_messages
+  ↓
+保存请求级 Trace 到 agent_traces
+  ↓
+保存每次工具调用到 tool_call_logs
+  ↓
+返回结构化 JSON
+```
+
+项目新增数据库查询脚本：
+
+```bash
+python eval/query_db_traces.py
+```
+
+当前支持：
+
+- 查询最近 10 条 Agent Trace
+- 查询慢请求 Top5
+- 查询失败请求
+- 根据 `trace_id` 查询工具调用明细
+- 根据 `session_id` 查询聊天历史
+
+这部分让项目从“只写本地 JSONL 日志”升级为“可结构化落库、可查询、可回放、可分析”的 AI 后端服务原型。
+
 ### 4.5 Agent 与 RAG 评估
 
 项目内置最小评估脚本：
@@ -409,7 +457,8 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 ├── eval/
 │   ├── questions.json           # 评估问题集
 │   ├── run_eval.py              # 工具调用、RAG 检索、MRR、答案关键点、Citation Faithfulness、rerank mode 对比评估脚本
-│   └── analyze_logs.py          # 读取 JSONL trace，统计 Metrics 和慢请求
+│   ├── analyze_logs.py          # 读取 JSONL trace，统计 Metrics 和慢请求
+│   └── query_db_traces.py       # 查询 MySQL 中的 trace、慢请求、失败请求、工具调用和聊天历史
 ├── examples/                    # 命令行调试和基础示例
 │   ├── rag_cli.py
 │   ├── langgraph_cli.py
@@ -421,6 +470,7 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 ├── Dockerfile                   # 容器化部署配置
 ├── .dockerignore                # Docker 构建忽略文件
 ├── agent.py                     # 手写 Function Calling Agent Loop
+├── database.py                  # MySQL 连接、建表与持久化写入函数
 ├── config.py                    # 项目配置
 ├── models.py                    # LLM 和 Embedding 初始化
 ├── schemas.py                   # 工具 Schema
@@ -461,13 +511,47 @@ pip install -r requirements.txt
 DEEPSEEK_API_KEY=你的 API Key
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_MODEL=deepseek-v4-flash
+
+MYSQL_HOST=127.0.0.1
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASSWORD=your_mysql_password_here
+MYSQL_DATABASE=rag_agent
+MYSQL_CHARSET=utf8mb4
 ```
 
-> 注意：不要把真实 API Key 提交到 GitHub。
+> 注意：不要把真实 API Key、MySQL 密码等敏感信息提交到 GitHub。
 
 ---
 
-### 6.3 命令行运行
+### 6.3 初始化 MySQL 数据库
+
+本项目的 LangGraph 主线接口 `/chat/langgraph` 支持把会话、消息、Trace 和工具调用记录保存到 MySQL。
+
+先创建数据库：
+
+```sql
+CREATE DATABASE rag_agent DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```
+
+然后初始化表结构：
+
+```bash
+python database.py
+```
+
+初始化后会创建：
+
+```text
+chat_sessions
+chat_messages
+agent_traces
+tool_call_logs
+```
+
+---
+
+### 6.4 命令行运行
 
 ```bash
 python examples/rag_cli.py
@@ -484,7 +568,7 @@ RAG 是什么？
 
 ---
 
-### 6.4 启动 FastAPI 服务
+### 6.5 启动 FastAPI 服务
 
 ```bash
 uvicorn app.main:app --reload
@@ -507,7 +591,7 @@ curl http://127.0.0.1:8000/health
 
 ---
 
-### 6.5 调用 `/chat`
+### 6.6 调用 `/chat`
 
 ```bash
 curl -X POST http://127.0.0.1:8000/chat \
@@ -523,7 +607,7 @@ http://127.0.0.1:8000/docs
 
 ---
 
-### 6.6 调用 `/chat/stream`
+### 6.7 调用 `/chat/stream`
 
 `/chat/stream` 使用 FastAPI `StreamingResponse` 返回 SSE 结构化流式事件。
 
@@ -553,7 +637,7 @@ data: {"type": "done", "trace_id": "..."}
 
 ---
 
-### 6.7 调用 `/chat/langgraph`
+### 6.8 调用 `/chat/langgraph`
 
 `/chat/langgraph` 使用 LangGraph Agent，支持通过 `session_id` 保留多轮对话状态。
 
@@ -632,7 +716,7 @@ python eval/run_eval.py --compare-prompts
 
 ---
 
-### 6.9 分析 Agent Trace 日志
+### 6.10 分析 Agent Trace 日志
 
 运行日志分析脚本：
 
@@ -1160,8 +1244,8 @@ POST /chat/langgraph
 2. 评估已覆盖工具调用、source 命中、chunk-level Recall@k、MRR@3、答案关键点命中、Citation Faithfulness baseline、rerank mode 差异分析和 Prompt V1/V2 对比，但还没有覆盖严格引用一致性、幻觉检测和 LLM-as-Judge
 3. 天气工具是模拟数据
 4. 尚未接入前端
-5. Trace 和 Metrics 目前是脚本级分析，尚未接入可视化面板、告警或 OpenTelemetry
-6. LangGraph 已接入 FastAPI，但 checkpoint 目前仍是内存级 InMemorySaver，尚未持久化到数据库
+5. Trace 和 Metrics 已支持 JSONL 日志分析与 MySQL 查询脚本，但尚未接入可视化面板、告警或 OpenTelemetry
+6. LangGraph 的会话、消息、Trace 和工具调用已接入 MySQL 持久化，但 checkpoint 目前仍是内存级 InMemorySaver，尚未持久化到数据库级 checkpointer
 7. `/chat/stream` 当前是应用层流式返回，还不是模型 token 级 streaming
 8. 尚未接入 vLLM 本地模型部署
 
@@ -1175,10 +1259,11 @@ POST /chat/langgraph
 2. 继续扩展 hard case，覆盖更多真实业务问题和多文档综合问题
 3. 继续扩展 reranker 实验：调大 candidate_k、扩展真实业务文档、对比更多 reranker 模型
 4. 将 Prompt 对比扩展为更多真实业务 case，并继续观察 V2 在复杂问题下的稳定性
-5. 将 Trace / Metrics 扩展为可视化面板或 OpenTelemetry 链路追踪
-6. 将 `/chat/stream` 升级为真正的模型 token 级 streaming
-7. 接入 vLLM 部署本地 Qwen 小模型
-8. 增加前端页面
-9. 接入真实天气 / 搜索 / 数据库工具
+5. 将 MySQL Trace 查询能力扩展为可视化面板或 OpenTelemetry 链路追踪
+6. 将 LangGraph checkpoint 从 InMemorySaver 升级为数据库持久化 checkpointer
+7. 将 `/chat/stream` 升级为真正的模型 token 级 streaming
+8. 接入 vLLM 部署本地 Qwen 小模型
+9. 增加前端页面
+10. 接入真实天气 / 搜索 / 数据库工具
 
 ---
