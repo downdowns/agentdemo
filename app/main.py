@@ -13,11 +13,12 @@
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -82,6 +83,30 @@ app = FastAPI(
     version="0.1.0",
 )
 
+def verify_api_key(x_api_key: str | None = Header(default=None)) -> None:
+    """校验 API Key。
+
+    客户端需要在请求头中传：
+        X-API-Key: xxx
+
+    服务端从 .env 读取 APP_API_KEY。
+    如果未配置或不匹配，则拒绝请求。
+    """
+
+    expected_api_key = os.getenv("APP_API_KEY")
+
+    if not expected_api_key:
+        raise HTTPException(
+            status_code=500,
+            detail="服务端未配置 APP_API_KEY",
+        )
+
+    if x_api_key != expected_api_key:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid API Key",
+        )
+
 
 @app.get("/health")
 def health_check() -> dict:
@@ -96,7 +121,10 @@ def health_check() -> dict:
 
 
 @app.post("/chat")
-def chat(request: ChatRequest) -> dict:
+def chat(
+    request: ChatRequest,
+    _: None = Depends(verify_api_key),
+) -> dict:
     """Agent 聊天接口。
 
     流程：
@@ -193,7 +221,10 @@ def stream_agent_result_sse(result: dict, chunk_size: int = 20):
 
 
 @app.post("/chat/stream")
-def chat_stream(request: ChatRequest):
+def chat_stream(
+    request: ChatRequest,
+    _: None = Depends(verify_api_key),
+):
     """Agent 流式输出接口。
 
     注意：
@@ -226,7 +257,10 @@ def chat_stream(request: ChatRequest):
 
 
 @app.post("/chat/langgraph")
-def chat_langgraph(request: LangGraphChatRequest) -> dict:
+def chat_langgraph(
+    request: LangGraphChatRequest,
+    _: None = Depends(verify_api_key),
+) -> dict:
     """LangGraph Agent 聊天接口。
 
     和 /chat 的区别：
