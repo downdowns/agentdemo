@@ -709,8 +709,7 @@
       "search_docs"
     ],
     "expected_sources": [
-      "b2b_merchant_operation.md",
-      "b2b_ai_assistant_scenarios.md"
+      "b2b_merchant_operation.md"
     ],
     "expected_chunk_ids": [
       "b2b_merchant_operation.md::chunk_001"
@@ -1026,6 +1025,52 @@
           "现有流程",
           "成功指标",
           "人工兜底"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_csv_001",
+    "category": "b2b_business",
+    "question": "AI 可以直接决定售后退款吗？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_faq.csv"
+    ],
+    "expected_chunk_ids": [
+      "b2b_faq.csv::chunk_000"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "不建议让 AI 直接决定售后退款",
+        "keywords": [
+          "不建议",
+          "AI",
+          "直接决定",
+          "售后退款"
+        ]
+      },
+      {
+        "point": "AI 可以解释平台规则、整理证据材料、生成客服回复草稿和进行问题分类",
+        "keywords": [
+          "解释",
+          "平台规则",
+          "证据材料",
+          "客服回复",
+          "问题分类"
+        ]
+      },
+      {
+        "point": "退款金额、赔偿责任、处罚、法律争议和合同解释应由人工或平台规则最终判断",
+        "keywords": [
+          "退款金额",
+          "赔偿责任",
+          "处罚",
+          "法律争议",
+          "人工",
+          "平台规则"
         ]
       }
     ]

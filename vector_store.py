@@ -1,5 +1,6 @@
 """文档加载、文本切分、Chroma 向量库创建/加载。"""
 
+import csv
 import os
 import shutil
 
@@ -11,9 +12,42 @@ from config import CHROMA_DB_DIR, COLLECTION_NAME, DOCS_DIR, DOCS_SIGNATURE_FILE
 from models import embeddings
 
 
+def read_csv_as_text(file_path: str) -> str:
+    """
+    读取 CSV 文件，并转换成适合 RAG 检索的纯文本。
+
+    为什么不直接 f.read()？
+    - CSV 是结构化数据，有表头和多行记录；
+    - 直接读也能读到文本，但语义不够清晰；
+    - 转成“字段名：字段值”的格式，更利于 embedding 和检索。
+
+    示例输出：
+    第 1 条记录：
+    category：supplier_onboarding
+    question：供应商入驻需要准备哪些资料？
+    answer：需要营业执照...
+    """
+    rows_text: list[str] = []
+
+    with open(file_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+
+        for row_index, row in enumerate(reader, start=1):
+            row_lines = [f"第 {row_index} 条记录："]
+
+            for column_name, value in row.items():
+                clean_value = (value or "").strip()
+                if clean_value:
+                    row_lines.append(f"{column_name}：{clean_value}")
+
+            rows_text.append("\n".join(row_lines))
+
+    return "\n\n".join(rows_text)
+
+
 def load_local_docs(docs_dir: str) -> list[Document]:
     """
-    读取 docs 文件夹里的 .txt / .md 文件，并包装成 LangChain Document。
+    读取 docs 文件夹里的 .txt / .md / .csv 文件，并包装成 LangChain Document。
 
     Document 包含：
     - page_content：正文内容
@@ -31,17 +65,23 @@ def load_local_docs(docs_dir: str) -> list[Document]:
     # 遍历 docs 文件夹下的所有文件名。
     # sorted(...) 是为了固定读取顺序，方便调试和复现结果。
     for filename in sorted(os.listdir(docs_dir)):
-        # 只读取 txt 和 md，其它文件忽略。
-        if not filename.endswith((".txt", ".md")):
+        # 只读取 txt / md / csv，其它文件暂时忽略。
+        if not filename.endswith((".txt", ".md", ".csv")):
             continue
 
         # 拼接完整文件路径，例如：./docs/profile.md。
         file_path = os.path.join(docs_dir, filename)
 
-        # 以 UTF-8 编码读取文件内容。
-        # with open(...) 可以保证文件读取结束后自动关闭。
-        with open(file_path, "r", encoding="utf-8") as f:
-            content = f.read()
+        # 根据文件类型选择不同读取方式。
+        # - md / txt：本身就是纯文本，直接读取；
+        # - csv：是表格结构，先转换成“字段名：字段值”的纯文本。
+        if filename.endswith(".csv"):
+            content = read_csv_as_text(file_path)
+        else:
+            # 以 UTF-8 编码读取文件内容。
+            # with open(...) 可以保证文件读取结束后自动关闭。
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
 
         # 跳过空文件，避免空内容进入知识库。
         if not content.strip():
@@ -69,15 +109,15 @@ def get_docs_signature(docs_dir: str) -> str:
     - 文件最后修改时间
     - 文件大小
 
-    只要你新增、删除或修改 docs 里的 .md / .txt 文件，签名通常就会变化。
+    只要你新增、删除或修改 docs 里的 .md / .txt / .csv 文件，签名通常就会变化。
     """
     # 用列表保存每个文件的状态信息。
     signature_items: list[str] = []
 
     # 遍历 docs 目录下所有文件，顺序固定，避免签名顺序随机变化。
     for filename in sorted(os.listdir(docs_dir)):
-        # 只统计 txt / md 文件，其它文件不影响知识库。
-        if not filename.endswith((".txt", ".md")):
+        # 只统计 txt / md / csv 文件，其它文件不影响知识库。
+        if not filename.endswith((".txt", ".md", ".csv")):
             continue
 
         # 拼接完整路径。

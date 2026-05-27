@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + LangGraph + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、Feedback 数据飞轮 baseline、API Key 鉴权、请求限流、`search_docs` 检索缓存、真实 B2B 业务知识库、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、Citation Faithfulness、按 category 分组评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、Feedback 数据飞轮 baseline、API Key 鉴权、请求限流、`search_docs` 检索缓存、真实 B2B 业务知识库、多格式文档加载（Markdown / TXT / CSV）、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、Citation Faithfulness、按 category 分组评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
 
 当前提供三类 Agent API：
 
@@ -221,11 +221,35 @@ docs/b2b_ai_assistant_scenarios.md
 docs/b2b_knowledge_base_governance.md
 docs/b2b_solution_delivery.md
 docs/b2b_faq.txt
+docs/b2b_faq.csv
 ```
 
 这些文档用于模拟 B2B 平台里的商家运营、供应商管理、商品信息质量、售后纠纷、经营诊断和 AI 解决方案交付等真实业务问答场景。重建 Chroma 后，`search_docs` 可以检索到 `b2b_` 业务文档，并通过 `eval/questions.json` 中的 B2B 评估题验证检索和答案质量。
 
-当前文档加载器支持 `.md` / `.txt`。企业生产环境中还会接入 PDF、DOCX、Excel、HTML、飞书/Confluence 页面、数据库记录等多种来源；本项目当前先用 Markdown / TXT 保证文档结构清晰、chunk 可控、评估结果可解释，后续可继续扩展多格式 loader。
+### 4.1.4 多格式文档加载 baseline：CSV
+
+当前文档加载器已支持 `.md` / `.txt` / `.csv` 三类本地文档。
+
+CSV 属于结构化表格数据，不能只按普通文本粗暴读取；本项目在 `vector_store.py` 中新增 `read_csv_as_text()`，会把每一行转换成更适合 embedding 的“字段名：字段值”格式，例如：
+
+```text
+第 3 条记录：
+category：after_sales
+question：AI 可以直接决定售后退款吗
+answer：不建议让 AI 直接决定售后退款...
+```
+
+同时，`get_docs_signature()` 也已纳入 `.csv` 文件。这样新增或修改 CSV 后，系统可以感知知识库变化，并在需要时重建 Chroma 向量库。
+
+本轮新增 `docs/b2b_faq.csv`，并在 `eval/questions.json` 中加入 `b2b_csv_001` 评估题，验证 CSV 文档能够完成以下链路：
+
+```text
+CSV 文件 → 结构化文本转换 → 文档切分 → Chroma 入库 → search_docs 检索 → Agent 回答 → eval 指标验证
+```
+
+当前 CSV loader 是 baseline：先把整张 CSV 转成一个文本文档，再交给统一 splitter 切分。后续如果 CSV 行数变多，可以升级为“每一行 CSV 生成一个 Document”，并把 `category`、`question` 等字段写入 metadata，支持更细粒度过滤和评估。
+
+企业生产环境中还会接入 PDF、DOCX、Excel、HTML、飞书/Confluence 页面、数据库记录等多种来源；本项目当前先完成 Markdown / TXT / CSV 三类可控输入，保证文档结构清晰、chunk 可解释、评估链路可回归。
 
 ### 4.2 Function Calling Agent Loop
 
@@ -595,7 +619,7 @@ eval/run_eval.py
 - `checkpoint`、`thread_id`、`InMemorySaver` 三者关系；
 - 为什么 LangGraph Agent 不能只用 `MessagesState`，以及 `tool_calls` / `sources` 为什么需要 reducer。
 
-第 54 步进一步加入 6 道 B2B 业务评估题，并为每道题补充 `expected_sources`、`expected_chunk_ids` 和 `expected_answer_points`，覆盖商家运营、供应商入驻、商品发布、售后纠纷、经营诊断和 AI 解决方案交付。
+第 54 步进一步加入 6 道 B2B 业务评估题，并为每道题补充 `expected_sources`、`expected_chunk_ids` 和 `expected_answer_points`，覆盖商家运营、供应商入驻、商品发布、售后纠纷、经营诊断和 AI 解决方案交付。第 55 步新增 1 道 CSV 来源评估题，用于验证多格式文档加载后的检索和答案质量。
 
 评估样本目前通过 `category` 区分：
 
@@ -603,7 +627,7 @@ eval/run_eval.py
 |---|---:|---|
 | `tool_basic` | 2 | calculator / get_weather 基础工具题 |
 | `rag_technical` | 12 | RAG、Chroma、FastAPI、LangGraph 等技术知识库题 |
-| `b2b_business` | 6 | B2B 业务知识库题 |
+| `b2b_business` | 7 | B2B 业务知识库题，包含 1 道 CSV 来源评估题 |
 
 `run_eval.py` 会同时输出整体指标和按 category 分组的指标，方便分别观察技术知识库和业务知识库的检索质量。
 
@@ -612,16 +636,16 @@ eval/run_eval.py
 ```text
 Tool Call Pass Rate：100.00%
 Source Hit Rate：100.00%
-RAG 评估题数：18
-Chunk Recall@1：约 68.70%
-Chunk Recall@3：约 92.96%
-MRR@3：约 100.00%
+RAG 评估题数：19
+Chunk Recall@1：65.09%
+Chunk Recall@3：93.33%
+MRR@3：97.37%
 Answer Point Hit Rate：100.00%
 Citation Faithfulness Rate：100.00%
 
 按 category 分组：
 - rag_technical：12 题，Chunk Recall@3 约 89.44%，MRR@3 约 100.00%
-- b2b_business：6 题，Chunk Recall@1 约 83.33%，Chunk Recall@3 100.00%，MRR@3 100.00%
+- b2b_business：7 题，Chunk Recall@1 71.43%，Chunk Recall@3 100.00%，MRR@3 92.86%
 ```
 
 使用 `python eval/run_eval.py --compare-rerank` 可自动输出 rerank 前后对比：
@@ -655,7 +679,7 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 .
 ├── app/
 │   └── main.py                  # FastAPI 服务入口
-├── docs/                        # 本地知识库文档，包括技术文档和 B2B 业务文档
+├── docs/                        # 本地知识库文档，包括技术文档、B2B 业务文档和 CSV FAQ
 ├── agent_workflows/
 │   ├── __init__.py
 │   └── langgraph_agent.py       # LangGraph Agent 工作流
@@ -681,7 +705,7 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 ├── models.py                    # LLM 和 Embedding 初始化
 ├── schemas.py                   # 工具 Schema
 ├── tools.py                     # 工具函数实现
-├── vector_store.py              # 文档加载、切分、Chroma 向量库
+├── vector_store.py              # 文档加载（md/txt/csv）、切分、Chroma 向量库
 └── README.md
 ```
 
@@ -962,27 +986,27 @@ python eval/run_eval.py
 输出示例：
 
 ```text
-共加载 20 条评估问题
+共加载 21 条评估问题
 ...
 评估完成
-总题数：20
-工具调用通过数 Tool Call Pass Count：20
+总题数：21
+工具调用通过数 Tool Call Pass Count：21
 工具调用通过率 Tool Call Pass Rate：100.00%
-来源命中数 Source Hit Count：20
+来源命中数 Source Hit Count：21
 来源命中率 Source Hit Rate：100.00%
-RAG 评估题数：18
-Chunk Recall@1：约 68.70%
-Chunk Recall@3：约 92.96%
-MRR@3：约 100.00%
-答案质量评估题数：18
+RAG 评估题数：19
+Chunk Recall@1：65.09%
+Chunk Recall@3：93.33%
+MRR@3：97.37%
+答案质量评估题数：19
 Answer Point Hit Rate：100.00%
-Citation Faithfulness 评估题数：18
+Citation Faithfulness 评估题数：19
 Citation Faithfulness Rate：100.00%
 
 按 category 分组指标：
 - tool_basic：2 题，RAG 指标 N/A
 - rag_technical：12 题，Chunk Recall@3 约 89.44%
-- b2b_business：6 题，Chunk Recall@3 100.00%，MRR@3 100.00%
+- b2b_business：7 题，Chunk Recall@3 100.00%，MRR@3 92.86%
 ```
 
 对比 keyword 与 CrossEncoder rerank：
