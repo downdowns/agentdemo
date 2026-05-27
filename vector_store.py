@@ -44,6 +44,54 @@ def read_csv_as_text(file_path: str) -> str:
 
     return "\n\n".join(rows_text)
 
+def load_csv_docs(file_path: str, filename: str) -> list[Document]:
+    """
+    读取 CSV 文件，并把每一行转换成一个独立的 LangChain Document。
+
+    为什么要每行一个 Document？
+    - CSV 通常是一行一条结构化知识，例如一条 FAQ、一条商品规则、一条配置记录；
+    - 每行独立成 Document 后，检索粒度更细；
+    - metadata 可以记录 row_index、category、question 等字段；
+    - 后续做 bad case 分析时，可以定位到 CSV 的具体哪一行。
+    """
+    csv_docs: list[Document] = []
+
+    with open(file_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+
+        for row_index, row in enumerate(reader, start=1):
+            row_lines = [f"第 {row_index} 条记录："]
+
+            for column_name, value in row.items():
+                clean_value = (value or "").strip()
+                if clean_value:
+                    row_lines.append(f"{column_name}：{clean_value}")
+
+            page_content = "\n".join(row_lines)
+
+            if not page_content.strip():
+                continue
+
+            metadata = {
+                "source": filename,
+                "row_index": row_index,
+            }
+
+            # 如果 CSV 里有这些字段，就顺手放进 metadata。
+            # 这样后续检索、日志、分析时能更精确定位。
+            for metadata_field in ["category", "question"]:
+                field_value = (row.get(metadata_field) or "").strip()
+                if field_value:
+                    metadata[metadata_field] = field_value
+
+            csv_docs.append(
+                Document(
+                    page_content=page_content,
+                    metadata=metadata,
+                )
+            )
+
+    return csv_docs
 
 def load_local_docs(docs_dir: str) -> list[Document]:
     """
@@ -74,9 +122,12 @@ def load_local_docs(docs_dir: str) -> list[Document]:
 
         # 根据文件类型选择不同读取方式。
         # - md / txt：本身就是纯文本，直接读取；
-        # - csv：是表格结构，先转换成“字段名：字段值”的纯文本。
+        # - csv：结构化表格数据，每一行转换成一个独立 Document；
         if filename.endswith(".csv"):
-            content = read_csv_as_text(file_path)
+            # append: 把整个列表作为一个元素塞进去
+            # extend：把列表里的每个元素逐个塞进去
+            docs.extend(load_csv_docs(file_path, filename))
+            continue
         else:
             # 以 UTF-8 编码读取文件内容。
             # with open(...) 可以保证文件读取结束后自动关闭。
@@ -159,28 +210,111 @@ def save_signature(signature_file: str, signature: str) -> None:
 
 
 def split_docs(docs: list[Document]) -> list[Document]:
-    """把长文档切分成更小的片段，并为每个片段补充 chunk metadata。"""
+    """
+    把原始 Document 切分成更小的 chunk，并为每个 chunk 补充评估和溯源 metadata。
+
+    输入：
+    - docs：load_local_docs() 读取出来的原始 Document 列表。
+      - md / txt：通常是“一个文件 = 一个 Document”
+      - csv：当前是“CSV 每一行 = 一个 Document”
+
+    输出：
+    - splits：切分后的 chunk 列表，每个 chunk 仍然是一个 Document。
+
+    本函数负责两件事：
+    1. 使用 RecursiveCharacterTextSplitter 做文本切分；
+    2. 给每个 chunk 补充 chunk_index 和 chunk_id，方便后续检索评估、日志分析和引用定位。
+    """
+    # 创建文本切分器。
+    #
+    # RecursiveCharacterTextSplitter 的思路是：
+    # 优先按更自然的边界切分文本，例如段落、换行、句子；
+    # 如果文本仍然太长，再继续递归地按更小粒度切分。
+    #
+    # 这样比“每 500 个字符硬切一刀”更容易保留语义完整性。
     text_splitter = RecursiveCharacterTextSplitter(
         # 每个片段大约 500 个字符。
         # 500 左右更适合当前 Markdown 技术文档，能保留较完整的小节语义。
         chunk_size=500,
         # 相邻片段重叠 80 个字符，避免关键上下文被切断。
+        # 例如某个概念刚好在 chunk 边界附近，overlap 可以让前后两个 chunk 都保留一部分上下文。
         chunk_overlap=80,
     )
 
+    # 执行真正的切分。
+    #
+    # split_documents 会保留原始 Document 的 metadata。
+    # 例如 CSV 行级 Document 里的 source、row_index、category、question，
+    # 在切分后仍然会跟着对应 chunk 走。
     splits = text_splitter.split_documents(docs)
-    
-    source_chunk_count: dict[str, int] = {}
 
+    # 用来记录“每个计数维度”已经生成了多少个 chunk。
+    #
+    # 为什么不用一个全局计数？
+    # - 我们希望每个 source 文件都有自己的 chunk 编号；
+    # - 对 CSV 来说，我们希望每一行也有自己的 chunk 编号。
+    #
+    # 普通 md/txt 的 key：
+    #   langchain_rag.md
+    #
+    # CSV 行级 Document 的 key：
+    #   b2b_faq.csv::row_003
+    chunk_count_by_key: dict[str, int] = {}
+
+    # 遍历每一个切分后的 chunk，为它补充 chunk_index 和 chunk_id。
     for split in splits:
+        # source 表示这个 chunk 来自哪个原始文件。
+        # 普通文档示例：langchain_rag.md
+        # CSV 文档示例：b2b_faq.csv
         source = split.metadata.get("source", "unknown")
 
-        chunk_index = source_chunk_count.get(source, 0)
-        source_chunk_count[source] = chunk_index + 1
+        # row_index 只会出现在 CSV 行级 Document 中。
+        # 普通 md/txt 没有 row_index，因此这里会是 None。
+        row_index = split.metadata.get("row_index")
 
+        # 决定当前 chunk 应该按哪个维度计数。
+        #
+        # 对普通 md/txt：
+        #   chunk_key = "langchain_rag.md"
+        #
+        # 对 CSV 第 3 行：
+        #   chunk_key = "b2b_faq.csv::row_003"
+        #
+        # 这样可以保证 CSV 每一行的 chunk 编号都从 0 开始。
+        if row_index is not None:
+            chunk_key = f"{source}::row_{int(row_index):03d}"
+        else:
+            chunk_key = source
+
+        # 取出当前 key 已经生成过多少个 chunk。
+        # 如果这个 key 第一次出现，就从 0 开始。
+        chunk_index = chunk_count_by_key.get(chunk_key, 0)
+
+        # 当前 chunk 用掉了这个编号，所以计数 +1，给下一个 chunk 使用。
+        chunk_count_by_key[chunk_key] = chunk_index + 1
+
+        # chunk_index 是数字编号，方便程序排序、统计和展示。
         split.metadata["chunk_index"] = chunk_index
-        split.metadata["chunk_id"] = f"{source}::chunk_{chunk_index:03d}"
 
+        # chunk_id 是稳定、可读的字符串 ID，用于：
+        # - eval/questions.json 里的 expected_chunk_ids；
+        # - Chunk Recall@k / MRR@3 等检索指标；
+        # - 日志分析和 bad case 定位；
+        # - 回答引用和来源追踪。
+        #
+        # 普通 md/txt 示例：
+        #   langchain_rag.md::chunk_003
+        #
+        # CSV 行级示例：
+        #   b2b_faq.csv::row_003::chunk_000
+        if row_index is not None:
+            split.metadata["chunk_id"] = (
+                f"{source}::row_{int(row_index):03d}::chunk_{chunk_index:03d}"
+            )
+        else:
+            split.metadata["chunk_id"] = f"{source}::chunk_{chunk_index:03d}"
+
+    # 返回已经切分好，并且补充了 chunk metadata 的 Document 列表。
     return splits
 
 

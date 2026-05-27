@@ -768,6 +768,7 @@
       "b2b_supplier_onboarding.md"
     ],
     "expected_chunk_ids": [
+      "b2b_faq.csv::row_001::chunk_000",
       "b2b_supplier_onboarding.md::chunk_000"
     ],
     "expected_answer_points": [
@@ -827,6 +828,7 @@
       "b2b_product_listing_rules.md"
     ],
     "expected_chunk_ids": [
+      "b2b_faq.csv::row_002::chunk_000",
       "b2b_product_listing_rules.md::chunk_000"
     ],
     "expected_answer_points": [
@@ -1040,7 +1042,7 @@
       "b2b_faq.csv"
     ],
     "expected_chunk_ids": [
-      "b2b_faq.csv::chunk_000"
+      "b2b_faq.csv::row_003::chunk_000"
     ],
     "expected_answer_points": [
       {

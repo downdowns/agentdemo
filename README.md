@@ -226,11 +226,25 @@ docs/b2b_faq.csv
 
 这些文档用于模拟 B2B 平台里的商家运营、供应商管理、商品信息质量、售后纠纷、经营诊断和 AI 解决方案交付等真实业务问答场景。重建 Chroma 后，`search_docs` 可以检索到 `b2b_` 业务文档，并通过 `eval/questions.json` 中的 B2B 评估题验证检索和答案质量。
 
-### 4.1.4 多格式文档加载 baseline：CSV
+### 4.1.4 多格式文档加载：CSV row-level loader
 
 当前文档加载器已支持 `.md` / `.txt` / `.csv` 三类本地文档。
 
-CSV 属于结构化表格数据，不能只按普通文本粗暴读取；本项目在 `vector_store.py` 中新增 `read_csv_as_text()`，会把每一行转换成更适合 embedding 的“字段名：字段值”格式，例如：
+CSV 属于结构化表格数据，不能只按普通文本粗暴读取。本项目在 `vector_store.py` 中新增 `load_csv_docs()`，将 CSV 从“整表一个 Document”的 baseline 升级为 **row-level loader**：
+
+```text
+CSV 文件
+  ↓
+每一行 CSV = 一个 LangChain Document
+  ↓
+每行 Document 保留 row_index / category / question 等 metadata
+  ↓
+统一进入 RecursiveCharacterTextSplitter
+  ↓
+生成 row-level chunk_id
+```
+
+例如 `docs/b2b_faq.csv` 中的售后退款 FAQ 会被转换成：
 
 ```text
 第 3 条记录：
@@ -239,15 +253,32 @@ question：AI 可以直接决定售后退款吗
 answer：不建议让 AI 直接决定售后退款...
 ```
 
+对应 metadata 包括：
+
+```json
+{
+  "source": "b2b_faq.csv",
+  "row_index": 3,
+  "category": "after_sales",
+  "question": "AI 可以直接决定售后退款吗"
+}
+```
+
+`split_docs()` 会根据 `row_index` 生成更精确的 row-level chunk_id：
+
+```text
+b2b_faq.csv::row_003::chunk_000
+```
+
+这样检索、评估和 bad case 分析时，不仅能知道命中了哪个 CSV 文件，还能定位到具体第几行 FAQ。
+
 同时，`get_docs_signature()` 也已纳入 `.csv` 文件。这样新增或修改 CSV 后，系统可以感知知识库变化，并在需要时重建 Chroma 向量库。
 
 本轮新增 `docs/b2b_faq.csv`，并在 `eval/questions.json` 中加入 `b2b_csv_001` 评估题，验证 CSV 文档能够完成以下链路：
 
 ```text
-CSV 文件 → 结构化文本转换 → 文档切分 → Chroma 入库 → search_docs 检索 → Agent 回答 → eval 指标验证
+CSV 文件 → row-level Document → row-level chunk_id → Chroma 入库 → search_docs 检索 → Agent 回答 → eval 指标验证
 ```
-
-当前 CSV loader 是 baseline：先把整张 CSV 转成一个文本文档，再交给统一 splitter 切分。后续如果 CSV 行数变多，可以升级为“每一行 CSV 生成一个 Document”，并把 `category`、`question` 等字段写入 metadata，支持更细粒度过滤和评估。
 
 企业生产环境中还会接入 PDF、DOCX、Excel、HTML、飞书/Confluence 页面、数据库记录等多种来源；本项目当前先完成 Markdown / TXT / CSV 三类可控输入，保证文档结构清晰、chunk 可解释、评估链路可回归。
 
@@ -639,13 +670,13 @@ Source Hit Rate：100.00%
 RAG 评估题数：19
 Chunk Recall@1：65.09%
 Chunk Recall@3：93.33%
-MRR@3：97.37%
+MRR@3：100.00%
 Answer Point Hit Rate：100.00%
 Citation Faithfulness Rate：100.00%
 
 按 category 分组：
 - rag_technical：12 题，Chunk Recall@3 约 89.44%，MRR@3 约 100.00%
-- b2b_business：7 题，Chunk Recall@1 71.43%，Chunk Recall@3 100.00%，MRR@3 92.86%
+- b2b_business：7 题，Chunk Recall@1 71.43%，Chunk Recall@3 100.00%，MRR@3 100.00%
 ```
 
 使用 `python eval/run_eval.py --compare-rerank` 可自动输出 rerank 前后对比：
@@ -997,7 +1028,7 @@ python eval/run_eval.py
 RAG 评估题数：19
 Chunk Recall@1：65.09%
 Chunk Recall@3：93.33%
-MRR@3：97.37%
+MRR@3：100.00%
 答案质量评估题数：19
 Answer Point Hit Rate：100.00%
 Citation Faithfulness 评估题数：19
@@ -1006,7 +1037,7 @@ Citation Faithfulness Rate：100.00%
 按 category 分组指标：
 - tool_basic：2 题，RAG 指标 N/A
 - rag_technical：12 题，Chunk Recall@3 约 89.44%
-- b2b_business：7 题，Chunk Recall@3 100.00%，MRR@3 92.86%
+- b2b_business：7 题，Chunk Recall@3 100.00%，MRR@3 100.00%
 ```
 
 对比 keyword 与 CrossEncoder rerank：
