@@ -2,7 +2,7 @@
 
 一个基于 **RAG + Function Calling + LangGraph + FastAPI** 的企业知识库多工具 Agent 项目。
 
-本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、Feedback 数据飞轮 baseline、API Key 鉴权、请求限流、`search_docs` 检索缓存、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
+本项目从零实现了一个可调用本地知识库、计算器和天气工具的 Agent，并补充了结构化返回、工具调用记录、RAG 来源追踪、Agent Trace、Metrics 日志分析、MySQL 会话与 Trace 持久化、Feedback 数据飞轮 baseline、API Key 鉴权、请求限流、`search_docs` 检索缓存、真实 B2B 业务知识库、chunk-level 检索评估、MRR@3 排序指标、答案关键点质量评估、Citation Faithfulness、按 category 分组评估、SSE 流式输出、keyword / CrossEncoder reranker 对比实验和 FastAPI 服务化能力。
 
 当前提供三类 Agent API：
 
@@ -78,7 +78,7 @@ search_docs / calculator / get_weather
 | 数据持久化 | MySQL / PyMySQL / session / message / trace / tool call tables |
 | Feedback 数据飞轮 | `POST /feedback` / `feedback_logs` / `eval/query_feedback.py` |
 | Metrics 分析 | `eval/analyze_logs.py` / `eval/query_db_traces.py` / `eval/query_feedback.py` |
-| 评估 | 自定义 eval 脚本 / Recall@k / MRR@3 / Answer Point Hit Rate / rerank mode 差异分析 |
+| 评估 | 自定义 eval 脚本 / category 分组指标 / Recall@k / MRR@3 / Answer Point Hit Rate / Citation Faithfulness / rerank mode 差异分析 |
 
 ---
 
@@ -202,6 +202,30 @@ RERANK_MODE
 `eval/analyze_logs.py` 已支持统计 `Search Docs Cache Hit Count`、`Miss Count`、`Unknown Count` 和 `Hit Rate`，用于观察缓存策略是否真的生效。
 
 > 当前实现是单进程内存版 retrieval cache，适合本地项目和服务原型；生产环境中通常会升级为 Redis 分布式缓存，并把知识库版本、租户 ID、权限过滤条件等加入 cache key，避免缓存污染。
+
+### 4.1.3 真实 B2B 业务知识库扩展
+
+项目已从早期技术文档知识库扩展为更贴近企业业务场景的 B2B 知识库，在 `docs/` 中新增商家运营、供应商入驻、商品发布、询盘转化、流量增长、客服售后、经营诊断、知识库治理和 AI 解决方案交付等业务文档。
+
+新增业务文档包括：
+
+```text
+docs/b2b_merchant_operation.md
+docs/b2b_supplier_onboarding.md
+docs/b2b_product_listing_rules.md
+docs/b2b_inquiry_conversion.md
+docs/b2b_store_traffic_growth.md
+docs/b2b_customer_service_after_sales.md
+docs/b2b_data_metrics_diagnosis.md
+docs/b2b_ai_assistant_scenarios.md
+docs/b2b_knowledge_base_governance.md
+docs/b2b_solution_delivery.md
+docs/b2b_faq.txt
+```
+
+这些文档用于模拟 B2B 平台里的商家运营、供应商管理、商品信息质量、售后纠纷、经营诊断和 AI 解决方案交付等真实业务问答场景。重建 Chroma 后，`search_docs` 可以检索到 `b2b_` 业务文档，并通过 `eval/questions.json` 中的 B2B 评估题验证检索和答案质量。
+
+当前文档加载器支持 `.md` / `.txt`。企业生产环境中还会接入 PDF、DOCX、Excel、HTML、飞书/Confluence 页面、数据库记录等多种来源；本项目当前先用 Markdown / TXT 保证文档结构清晰、chunk 可控、评估结果可解释，后续可继续扩展多格式 loader。
 
 ### 4.2 Function Calling Agent Loop
 
@@ -516,6 +540,7 @@ eval/run_eval.py
 ```json
 {
   "id": "rag_chunk_001",
+  "category": "rag_technical",
   "question": "RAG 中为什么要切分文档？",
   "expected_tools": ["search_docs"],
   "expected_sources": ["langchain_rag.md"],
@@ -560,22 +585,43 @@ eval/run_eval.py
    - 该指标用于最小化评估“答案是否有检索上下文支撑”，帮助定位潜在幻觉或引用不一致问题。
    - 当前使用关键词匹配作为可解释 baseline，后续可升级为 LLM-as-Judge / NLI / 人工抽检。
 
+8. **Category Metrics**
+   - 按 `tool_basic`、`rag_technical`、`b2b_business` 分组输出指标。
+   - 用于分别观察基础工具、技术知识库 RAG、B2B 业务知识库 RAG 的表现。
+
 评估集中额外加入了 3 道 hard case，用于验证更复杂的问题：
 
 - 企业知识库 RAG 回答不准确时如何排查和优化；
 - `checkpoint`、`thread_id`、`InMemorySaver` 三者关系；
 - 为什么 LangGraph Agent 不能只用 `MessagesState`，以及 `tool_calls` / `sources` 为什么需要 reducer。
 
+第 54 步进一步加入 6 道 B2B 业务评估题，并为每道题补充 `expected_sources`、`expected_chunk_ids` 和 `expected_answer_points`，覆盖商家运营、供应商入驻、商品发布、售后纠纷、经营诊断和 AI 解决方案交付。
+
+评估样本目前通过 `category` 区分：
+
+| category | 数量 | 说明 |
+|---|---:|---|
+| `tool_basic` | 2 | calculator / get_weather 基础工具题 |
+| `rag_technical` | 12 | RAG、Chroma、FastAPI、LangGraph 等技术知识库题 |
+| `b2b_business` | 6 | B2B 业务知识库题 |
+
+`run_eval.py` 会同时输出整体指标和按 category 分组的指标，方便分别观察技术知识库和业务知识库的检索质量。
+
 当前评估结果示例：
 
 ```text
 Tool Call Pass Rate：100.00%
 Source Hit Rate：100.00%
-Chunk Recall@1：约 61.39%
-Chunk Recall@3：89.44%
-MRR@3：100.00%
+RAG 评估题数：18
+Chunk Recall@1：约 68.70%
+Chunk Recall@3：约 92.96%
+MRR@3：约 100.00%
 Answer Point Hit Rate：100.00%
-Citation Faithfulness Rate：运行评估时自动输出
+Citation Faithfulness Rate：100.00%
+
+按 category 分组：
+- rag_technical：12 题，Chunk Recall@3 约 89.44%，MRR@3 约 100.00%
+- b2b_business：6 题，Chunk Recall@1 约 83.33%，Chunk Recall@3 100.00%，MRR@3 100.00%
 ```
 
 使用 `python eval/run_eval.py --compare-rerank` 可自动输出 rerank 前后对比：
@@ -609,7 +655,7 @@ Answer Point Hit Rate：100.00% -> 100.00%（+0.00%）
 .
 ├── app/
 │   └── main.py                  # FastAPI 服务入口
-├── docs/                        # 本地知识库文档
+├── docs/                        # 本地知识库文档，包括技术文档和 B2B 业务文档
 ├── agent_workflows/
 │   ├── __init__.py
 │   └── langgraph_agent.py       # LangGraph Agent 工作流
@@ -916,22 +962,27 @@ python eval/run_eval.py
 输出示例：
 
 ```text
-共加载 14 条评估问题
+共加载 20 条评估问题
 ...
 评估完成
-总题数：14
-工具调用通过数 Tool Call Pass Count：14
+总题数：20
+工具调用通过数 Tool Call Pass Count：20
 工具调用通过率 Tool Call Pass Rate：100.00%
-来源命中数 Source Hit Count：14
+来源命中数 Source Hit Count：20
 来源命中率 Source Hit Rate：100.00%
-RAG 评估题数：12
-Chunk Recall@1：约 61.39%
-Chunk Recall@3：89.44%
-MRR@3：100.00%
-答案质量评估题数：12
+RAG 评估题数：18
+Chunk Recall@1：约 68.70%
+Chunk Recall@3：约 92.96%
+MRR@3：约 100.00%
+答案质量评估题数：18
 Answer Point Hit Rate：100.00%
-Citation Faithfulness 评估题数：...
-Citation Faithfulness Rate：...
+Citation Faithfulness 评估题数：18
+Citation Faithfulness Rate：100.00%
+
+按 category 分组指标：
+- tool_basic：2 题，RAG 指标 N/A
+- rag_technical：12 题，Chunk Recall@3 约 89.44%
+- b2b_business：6 题，Chunk Recall@3 100.00%，MRR@3 100.00%
 ```
 
 对比 keyword 与 CrossEncoder rerank：
@@ -1382,9 +1433,9 @@ search_docs + calculator
 - 答案命中的关键点是否能被 retrieved chunks 支撑（Citation Faithfulness）
 - rerank baseline 是否改善检索排序
 
-当前评估指标包括 Tool Call Pass Rate、Source Hit Rate、Chunk Recall@1、Chunk Recall@3、MRR@3、Answer Point Hit Rate 和 Citation Faithfulness Rate，避免只靠人工测试。
+当前评估指标包括 Tool Call Pass Rate、Source Hit Rate、Chunk Recall@1、Chunk Recall@3、MRR@3、Answer Point Hit Rate 和 Citation Faithfulness Rate，并支持按 `category` 分组输出 `tool_basic`、`rag_technical`、`b2b_business` 指标，避免只靠人工测试。
 
-评估集不仅包含单知识点问题，也包含 hard case，例如 RAG 回答不准确时如何排查、LangGraph checkpoint/thread_id/InMemorySaver 的关系、State/reducer 设计等。通过低 MRR 样本分析，项目还补充了等价相关 chunk 到 ground truth，体现评估集迭代过程。
+评估集不仅包含单知识点问题，也包含 hard case，例如 RAG 回答不准确时如何排查、LangGraph checkpoint/thread_id/InMemorySaver 的关系、State/reducer 设计等；同时新增 B2B 业务题，覆盖商家运营、供应商入驻、商品发布、售后和经营诊断。通过低 MRR 样本分析，项目还补充了等价相关 chunk 到 ground truth，体现评估集迭代过程。
 
 同时通过 `eval/analyze_logs.py` 对 Agent 运行日志进行 Metrics 分析，补充运行层面的成功率、平均耗时、工具使用分布和慢请求排查能力。
 
@@ -1570,7 +1621,7 @@ POST /chat/langgraph
 当前项目仍处于工程原型和持续迭代阶段，存在以下不足：
 
 1. 已接入 CrossEncoder reranker baseline，但在当前小规模知识库上未优于 keyword rerank，后续需要在更大文档规模和更复杂 query 上继续验证
-2. 评估已覆盖工具调用、source 命中、chunk-level Recall@k、MRR@3、答案关键点命中、Citation Faithfulness baseline、rerank mode 差异分析和 Prompt V1/V2 对比，但还没有覆盖严格引用一致性、幻觉检测和 LLM-as-Judge
+2. 评估已覆盖工具调用、source 命中、chunk-level Recall@k、MRR@3、答案关键点命中、Citation Faithfulness baseline、category 分组指标、rerank mode 差异分析和 Prompt V1/V2 对比，但还没有覆盖严格引用一致性、幻觉检测和 LLM-as-Judge
 3. 天气工具是模拟数据
 4. 核心聊天接口已接入 API Key 鉴权、单进程内存版请求限流和 `search_docs` 内存缓存，但尚未实现用户体系、角色权限、Redis 分布式限流和 Redis 分布式缓存
 5. 尚未接入前端

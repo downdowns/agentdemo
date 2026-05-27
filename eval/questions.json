@@ -1,6 +1,7 @@
 [
   {
     "id": "calc_001",
+    "category": "tool_basic",
     "question": "帮我计算 23 乘以 19",
     "expected_tools": [
       "calculator"
@@ -11,6 +12,7 @@
   },
   {
     "id": "weather_001",
+    "category": "tool_basic",
     "question": "上海今天天气怎么样？",
     "expected_tools": [
       "get_weather"
@@ -21,6 +23,7 @@
   },
   {
     "id": "rag_chunk_001",
+    "category": "rag_technical",
     "question": "RAG 中为什么要切分文档？",
     "expected_tools": [
       "search_docs"
@@ -73,6 +76,7 @@
   },
   {
     "id": "rag_chunk_002",
+    "category": "rag_technical",
     "question": "chunk_size 和 chunk_overlap 分别是什么意思？",
     "expected_tools": [
       "search_docs"
@@ -125,6 +129,7 @@
   },
   {
     "id": "rag_chunk_003",
+    "category": "rag_technical",
     "question": "LangGraph checkpoint 和 thread_id 是什么关系？",
     "expected_tools": [
       "search_docs"
@@ -178,6 +183,7 @@
   },
   {
     "id": "rag_chunk_004",
+    "category": "rag_technical",
     "question": "InMemorySaver 有什么作用和限制？",
     "expected_tools": [
       "search_docs"
@@ -228,6 +234,7 @@
   },
   {
     "id": "rag_chunk_005",
+    "category": "rag_technical",
     "question": "LangGraph 中 reducer 有什么作用？",
     "expected_tools": [
       "search_docs"
@@ -281,6 +288,7 @@
   },
   {
     "id": "rag_chunk_006",
+    "category": "rag_technical",
     "question": "为什么 tool_calls 和 sources 也需要 reducer？",
     "expected_tools": [
       "search_docs"
@@ -334,6 +342,7 @@
   },
   {
     "id": "rag_chunk_007",
+    "category": "rag_technical",
     "question": "Chroma 在 RAG 系统中存储了什么？",
     "expected_tools": [
       "search_docs"
@@ -385,6 +394,7 @@
   },
   {
     "id": "rag_chunk_008",
+    "category": "rag_technical",
     "question": "为什么要给每个 chunk 保存 chunk_id？",
     "expected_tools": [
       "search_docs"
@@ -436,6 +446,7 @@
   },
   {
     "id": "rag_chunk_009",
+    "category": "rag_technical",
     "question": "FastAPI 为什么需要 Pydantic 请求模型和业务校验？",
     "expected_tools": [
       "search_docs"
@@ -488,6 +499,7 @@
   },
   {
     "id": "rag_hard_001",
+    "category": "rag_technical",
     "question": "如果企业知识库 RAG 回答不准确，你会从哪些环节排查和优化？",
     "expected_tools": [
       "search_docs"
@@ -555,6 +567,7 @@
   },
   {
     "id": "rag_hard_002",
+    "category": "rag_technical",
     "question": "LangGraph 里 checkpoint、thread_id 和 InMemorySaver 三者分别是什么？它们如何一起实现有状态多轮对话？",
     "expected_tools": [
       "search_docs"
@@ -621,6 +634,7 @@
   },
   {
     "id": "rag_hard_003",
+    "category": "rag_technical",
     "question": "为什么 LangGraph Agent 不能只用 MessagesState？tool_calls 和 sources 为什么也要 reducer？",
     "expected_tools": [
       "search_docs"
@@ -683,6 +697,335 @@
           "去重",
           "merge_tool_calls",
           "merge_sources"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_001",
+    "category": "b2b_business",
+    "question": "商家运营中 AI 可以帮忙做什么？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_merchant_operation.md",
+      "b2b_ai_assistant_scenarios.md"
+    ],
+    "expected_chunk_ids": [
+      "b2b_merchant_operation.md::chunk_001"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "AI 可以回答入驻、商品发布、活动、售后等规则问题",
+        "keywords": [
+          "规则问答",
+          "入驻",
+          "商品发布",
+          "活动",
+          "售后"
+        ]
+      },
+      {
+        "point": "AI 可以辅助生成或优化商品标题、卖点、详情描述和客服话术",
+        "keywords": [
+          "内容优化",
+          "标题",
+          "卖点",
+          "详情",
+          "客服话术"
+        ]
+      },
+      {
+        "point": "AI 可以结合商品完整度、询盘回复率、转化率等指标生成经营诊断或运营建议",
+        "keywords": [
+          "经营诊断",
+          "商品完整度",
+          "询盘回复率",
+          "转化率",
+          "运营建议"
+        ]
+      },
+      {
+        "point": "AI 可以进行任务提醒、工单分流或把复杂问题转人工处理",
+        "keywords": [
+          "任务提醒",
+          "工单分流",
+          "人工",
+          "跟进",
+          "复杂问题"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_002",
+    "category": "b2b_business",
+    "question": "供应商入驻需要准备哪些资料？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_supplier_onboarding.md"
+    ],
+    "expected_chunk_ids": [
+      "b2b_supplier_onboarding.md::chunk_000"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "供应商需要准备营业执照或合法经营主体证明",
+        "keywords": [
+          "营业执照",
+          "经营主体",
+          "证明"
+        ]
+      },
+      {
+        "point": "供应商需要准备法人或经办人身份信息以及联系方式",
+        "keywords": [
+          "法人",
+          "经办人",
+          "身份",
+          "联系人",
+          "电话"
+        ]
+      },
+      {
+        "point": "供应商需要提供经营类目、主营产品和品牌信息",
+        "keywords": [
+          "经营类目",
+          "主营产品",
+          "品牌"
+        ]
+      },
+      {
+        "point": "特殊类目可能需要行业资质、授权证明或检测报告",
+        "keywords": [
+          "特殊类目",
+          "行业资质",
+          "授权",
+          "检测报告"
+        ]
+      },
+      {
+        "point": "供应商可能还需要对公账户、开票资料或结算信息",
+        "keywords": [
+          "对公账户",
+          "开票",
+          "结算"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_003",
+    "category": "b2b_business",
+    "question": "商品发布为什么要填写完整标题和属性？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_product_listing_rules.md"
+    ],
+    "expected_chunk_ids": [
+      "b2b_product_listing_rules.md::chunk_000"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "完整标题和属性可以帮助采购商快速理解商品和筛选比较",
+        "keywords": [
+          "采购商",
+          "理解",
+          "筛选",
+          "比较",
+          "属性"
+        ]
+      },
+      {
+        "point": "高质量商品信息可以提升搜索曝光、询盘转化和交易信任",
+        "keywords": [
+          "搜索曝光",
+          "询盘转化",
+          "交易信任",
+          "商品信息"
+        ]
+      },
+      {
+        "point": "标题应包含核心品类、规格、材质、用途或适用场景",
+        "keywords": [
+          "核心品类",
+          "规格",
+          "材质",
+          "用途",
+          "适用场景"
+        ]
+      },
+      {
+        "point": "属性缺失会影响采购商判断规格、材质、交期和适用场景",
+        "keywords": [
+          "属性缺失",
+          "规格",
+          "材质",
+          "交期",
+          "适用场景"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_004",
+    "category": "b2b_business",
+    "question": "B2B 售后纠纷应该怎么处理？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_customer_service_after_sales.md"
+    ],
+    "expected_chunk_ids": [
+      "b2b_customer_service_after_sales.md::chunk_000",
+      "b2b_customer_service_after_sales.md::chunk_001"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "售后处理应先接收问题、收集证据、核对订单和合同",
+        "keywords": [
+          "接收问题",
+          "收集证据",
+          "订单",
+          "合同"
+        ]
+      },
+      {
+        "point": "证据可以包括聊天记录、物流单据、质检报告、图片视频和合同条款",
+        "keywords": [
+          "聊天记录",
+          "物流单据",
+          "质检报告",
+          "图片",
+          "合同条款"
+        ]
+      },
+      {
+        "point": "需要判断责任、提出处理方案、记录结果并复盘原因",
+        "keywords": [
+          "判断责任",
+          "处理方案",
+          "记录",
+          "复盘"
+        ]
+      },
+      {
+        "point": "涉及退款、赔偿、处罚、法律争议和合同解释时，应以平台规则、合同和人工审核为准",
+        "keywords": [
+          "退款",
+          "赔偿",
+          "处罚",
+          "人工审核",
+          "平台规则"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_005",
+    "category": "b2b_business",
+    "question": "B2B 经营诊断常看哪些指标？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_data_metrics_diagnosis.md"
+    ],
+    "expected_chunk_ids": [
+      "b2b_data_metrics_diagnosis.md::chunk_000",
+      "b2b_data_metrics_diagnosis.md::chunk_001"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "经营诊断常看商品完整度、曝光量、点击率和询盘率",
+        "keywords": [
+          "商品完整度",
+          "曝光量",
+          "点击率",
+          "询盘率"
+        ]
+      },
+      {
+        "point": "经营诊断会关注回复率和平均响应时长",
+        "keywords": [
+          "回复率",
+          "平均响应时长",
+          "响应"
+        ]
+      },
+      {
+        "point": "经营诊断会关注报价转化率、履约准时率和售后率",
+        "keywords": [
+          "报价转化率",
+          "履约准时率",
+          "售后率"
+        ]
+      },
+      {
+        "point": "AI 生成诊断建议时应说明数据依据，没有数据时应提示需要补充数据",
+        "keywords": [
+          "数据依据",
+          "补充数据",
+          "建议",
+          "诊断"
+        ]
+      }
+    ]
+  },
+  {
+    "id": "b2b_006",
+    "category": "b2b_business",
+    "question": "AI 解决方案交付流程包括哪些环节？",
+    "expected_tools": [
+      "search_docs"
+    ],
+    "expected_sources": [
+      "b2b_solution_delivery.md"
+    ],
+    "expected_chunk_ids": [
+      "b2b_solution_delivery.md::chunk_000"
+    ],
+    "expected_answer_points": [
+      {
+        "point": "AI 解决方案交付通常包括需求访谈和场景梳理",
+        "keywords": [
+          "需求访谈",
+          "场景梳理"
+        ]
+      },
+      {
+        "point": "交付流程包括数据和文档评估、方案设计和 Demo 原型",
+        "keywords": [
+          "数据",
+          "文档评估",
+          "方案设计",
+          "Demo",
+          "原型"
+        ]
+      },
+      {
+        "point": "交付流程包括效果验证、上线试点、反馈收集和持续迭代",
+        "keywords": [
+          "效果验证",
+          "上线试点",
+          "反馈收集",
+          "持续迭代"
+        ]
+      },
+      {
+        "point": "需求访谈要明确目标用户、核心痛点、现有流程、成功指标和人工兜底方式",
+        "keywords": [
+          "目标用户",
+          "核心痛点",
+          "现有流程",
+          "成功指标",
+          "人工兜底"
         ]
       }
     ]

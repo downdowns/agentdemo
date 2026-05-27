@@ -62,6 +62,7 @@ def load_questions() -> list[dict]:
 
     questions.json 的每一条数据包含：
     - id：问题编号
+    - category：问题分类，例如 tool_basic / rag_technical / b2b_business
     - question：用户问题
     - expected_tools：期望 Agent 调用的工具列表
     - expected_sources：期望 RAG 检索命中的文档来源列表
@@ -505,6 +506,17 @@ def evaluate_questions(
     low_citation_faithfulness_cases = []
     # 记录每一道 RAG 题的检索结果，后面用于做 rerank mode 差异分析。
     case_results = []
+    # 按 category 维度统计指标。
+    #
+    # 为什么要加 category？
+    # 现在 eval/questions.json 里既有：
+    # - tool_basic：基础工具题，例如 calculator / get_weather
+    # - rag_technical：技术知识库 RAG 题
+    # - b2b_business：B2B 业务知识库 RAG 题
+    #
+    # 如果只看整体指标，就看不出“技术文档”和“业务文档”各自表现如何。
+    # 所以这里额外维护一份分组统计，最后在 summary 里单独打印。
+    category_stats: dict[str, dict] = {}
 
     print("\n" + "=" * 80)
     print(f"开始评估：{label}")
@@ -515,9 +527,12 @@ def evaluate_questions(
     print(f"共加载 {total} 条评估问题")
 
     for item in questions:
+        category = item.get("category", "uncategorized")
+
         if verbose:
             print("\n---------------------------------")
             print("id:", item["id"])
+            print("category:", category)
             print("question:", item["question"])
             print("expected_tools:", item["expected_tools"])
 
@@ -626,6 +641,7 @@ def evaluate_questions(
             case_results.append(
                 {
                     "id": item["id"],
+                    "category": category,
                     "question": item["question"],
                     "expected_chunk_ids": expected_chunk_ids,
                     "actual_top3_chunk_ids": actual_chunk_ids[:3],
@@ -716,6 +732,52 @@ def evaluate_questions(
         if passed:
             passed_count += 1
 
+        # 更新 category 维度的统计。
+        #
+        # 注意：这里放在每道题评估逻辑的最后，
+        # 是因为此时 passed / source_hit / recall / mrr / answer score
+        # 都已经算出来了，可以一次性写入对应 category 的统计桶。
+        category_bucket = category_stats.setdefault(
+            category,
+            {
+                "total": 0,
+                "tool_call_pass_count": 0,
+                "source_hit_count": 0,
+                "rag_eval_count": 0,
+                "recall_at_1_sum": 0.0,
+                "recall_at_3_sum": 0.0,
+                "mrr_at_3_sum": 0.0,
+                "answer_point_eval_count": 0,
+                "answer_point_score_sum": 0.0,
+                "citation_faithfulness_eval_count": 0,
+                "citation_faithfulness_score_sum": 0.0,
+            },
+        )
+
+        category_bucket["total"] += 1
+
+        if passed:
+            category_bucket["tool_call_pass_count"] += 1
+
+        if source_hit:
+            category_bucket["source_hit_count"] += 1
+
+        if recall_at_1 is not None and recall_at_3 is not None and mrr_at_3 is not None:
+            category_bucket["rag_eval_count"] += 1
+            category_bucket["recall_at_1_sum"] += recall_at_1
+            category_bucket["recall_at_3_sum"] += recall_at_3
+            category_bucket["mrr_at_3_sum"] += mrr_at_3
+
+        if answer_point_score is not None:
+            category_bucket["answer_point_eval_count"] += 1
+            category_bucket["answer_point_score_sum"] += answer_point_score
+
+        if citation_faithfulness_score is not None:
+            category_bucket["citation_faithfulness_eval_count"] += 1
+            category_bucket["citation_faithfulness_score_sum"] += (
+                citation_faithfulness_score
+            )
+
     pass_rate = passed_count / total if total > 0 else 0
     source_hit_rate = source_hit_count / total if total > 0 else 0
     avg_recall_at_1 = recall_at_1_sum / rag_eval_count if rag_eval_count > 0 else 0
@@ -732,6 +794,62 @@ def evaluate_questions(
         if citation_faithfulness_eval_count > 0
         else 0
     )
+
+    # 把 category_stats 中的“原始累计值”转换成最终可读指标。
+    # 例如：
+    # - tool_call_pass_count / total -> tool_call_pass_rate
+    # - recall_at_1_sum / rag_eval_count -> chunk_recall_at_1
+    category_metrics = {}
+    for category, bucket in category_stats.items():
+        category_total = bucket["total"]
+        category_rag_eval_count = bucket["rag_eval_count"]
+        category_answer_eval_count = bucket["answer_point_eval_count"]
+        category_citation_eval_count = bucket["citation_faithfulness_eval_count"]
+
+        category_metrics[category] = {
+            "total": category_total,
+            "tool_call_pass_count": bucket["tool_call_pass_count"],
+            "tool_call_pass_rate": (
+                bucket["tool_call_pass_count"] / category_total
+                if category_total > 0
+                else 0
+            ),
+            "source_hit_count": bucket["source_hit_count"],
+            "source_hit_rate": (
+                bucket["source_hit_count"] / category_total
+                if category_total > 0
+                else 0
+            ),
+            "rag_eval_count": category_rag_eval_count,
+            "chunk_recall_at_1": (
+                bucket["recall_at_1_sum"] / category_rag_eval_count
+                if category_rag_eval_count > 0
+                else 0
+            ),
+            "chunk_recall_at_3": (
+                bucket["recall_at_3_sum"] / category_rag_eval_count
+                if category_rag_eval_count > 0
+                else 0
+            ),
+            "mrr_at_3": (
+                bucket["mrr_at_3_sum"] / category_rag_eval_count
+                if category_rag_eval_count > 0
+                else 0
+            ),
+            "answer_point_eval_count": category_answer_eval_count,
+            "answer_point_hit_rate": (
+                bucket["answer_point_score_sum"] / category_answer_eval_count
+                if category_answer_eval_count > 0
+                else 0
+            ),
+            "citation_faithfulness_eval_count": category_citation_eval_count,
+            "citation_faithfulness_rate": (
+                bucket["citation_faithfulness_score_sum"]
+                / category_citation_eval_count
+                if category_citation_eval_count > 0
+                else 0
+            ),
+        }
 
     metrics = {
         "label": label,
@@ -756,6 +874,7 @@ def evaluate_questions(
         "citation_faithfulness_rate": avg_citation_faithfulness_score,
         "low_citation_faithfulness_cases": low_citation_faithfulness_cases,
         "case_results": case_results,
+        "category_metrics": category_metrics,
     }
 
     print_eval_summary(metrics)
@@ -782,6 +901,62 @@ def print_eval_summary(metrics: dict) -> None:
     print(f"Answer Point Hit Rate：{metrics['answer_point_hit_rate']:.2%}")
     print("Citation Faithfulness 评估题数：", metrics["citation_faithfulness_eval_count"])
     print(f"Citation Faithfulness Rate：{metrics['citation_faithfulness_rate']:.2%}")
+
+    print("\n按 category 分组指标：")
+    category_metrics = metrics.get("category_metrics", {})
+    if not category_metrics:
+        print("无")
+    else:
+        # 固定展示顺序，方便每次跑 eval 时肉眼对比。
+        # 如果后续新增 category，没有写在 preferred_order 里，也会自动排在后面。
+        preferred_order = ["tool_basic", "rag_technical", "b2b_business"]
+        sorted_categories = [
+            category
+            for category in preferred_order
+            if category in category_metrics
+        ]
+        sorted_categories.extend(
+            sorted(
+                category
+                for category in category_metrics
+                if category not in preferred_order
+            )
+        )
+
+        for category in sorted_categories:
+            item = category_metrics[category]
+            print("---------------------------------")
+            print("category:", category)
+            print("总题数：", item["total"])
+            print(f"Tool Call Pass Rate：{item['tool_call_pass_rate']:.2%}")
+            print(f"Source Hit Rate：{item['source_hit_rate']:.2%}")
+            print("RAG 评估题数：", item["rag_eval_count"])
+
+            # tool_basic 这类题没有 expected_chunk_ids，
+            # 所以 rag_eval_count 为 0，不打印 Recall/MRR，避免误解为 0 分。
+            if item["rag_eval_count"] > 0:
+                print(f"Chunk Recall@1：{item['chunk_recall_at_1']:.2%}")
+                print(f"Chunk Recall@3：{item['chunk_recall_at_3']:.2%}")
+                print(f"MRR@3：{item['mrr_at_3']:.2%}")
+            else:
+                print("Chunk Recall@1：N/A")
+                print("Chunk Recall@3：N/A")
+                print("MRR@3：N/A")
+
+            print("答案质量评估题数：", item["answer_point_eval_count"])
+            if item["answer_point_eval_count"] > 0:
+                print(f"Answer Point Hit Rate：{item['answer_point_hit_rate']:.2%}")
+            else:
+                print("Answer Point Hit Rate：N/A")
+
+            print("Citation Faithfulness 评估题数：", item["citation_faithfulness_eval_count"])
+            if item["citation_faithfulness_eval_count"] > 0:
+                print(
+                    f"Citation Faithfulness Rate："
+                    f"{item['citation_faithfulness_rate']:.2%}"
+                )
+            else:
+                print("Citation Faithfulness Rate：N/A")
 
     print("\n低 Recall@1 样本：")
     if not metrics["low_recall_cases"]:
